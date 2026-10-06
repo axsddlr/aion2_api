@@ -30,14 +30,12 @@ Pick whichever fits you. You do **not** need both.
 ### Option A — a web API you can call from anything
 
 Best if you want to fetch data from a script, a bot, a website, or another language.
+The web service is a FastAPI app, managed with [uv](https://docs.astral.sh/uv/) — one command
+creates the environment, installs the dependencies and locks the versions:
 
 ```bash
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt          # Windows
-# source .venv/bin/activate && pip install -r requirements.txt       # macOS / Linux
-
-.venv\Scripts\python.exe -m uvicorn app:app --reload                 # Windows
-# uvicorn app:app --reload                                           # macOS / Linux
+uv sync                      # creates .venv and installs from pyproject.toml
+uv run uvicorn app:app --reload
 ```
 
 It prints `Uvicorn running on http://127.0.0.1:8000`. Leave that terminal open and try:
@@ -48,9 +46,15 @@ curl "http://127.0.0.1:8000/notices?limit=3"
 
 > On Windows PowerShell, `curl` is a built-in alias with different options — type
 > **`curl.exe`** instead.
+>
+> Don't have uv? Install it with `winget install astral-sh.uv` on Windows,
+> `brew install uv` on macOS, or `curl -LsSf https://astral.sh/uv/install.sh | sh` on Linux.
 
 There is also a clickable, self-documenting page at
 **<http://127.0.0.1:8000/docs>** where you can try every endpoint in the browser.
+
+There is no `requirements.txt` — `pyproject.toml` is the single source of truth for
+dependencies, and `uv.lock` pins them.
 
 ### Option B — the Python client, no installation
 
@@ -371,12 +375,13 @@ sources and is not installed.
 | `aion2_api.py` | The client library and CLI. Standard library only. |
 | `app.py` | The FastAPI web service (`/notices`, `/notices/{id}`, `/events`, `/servers`). |
 | `test_aion2.py` | Offline checks. No network, no dependencies. |
-| `requirements.txt` | The two packages the web service needs. |
+| `pyproject.toml` | Project metadata and the two dependencies the web service needs. |
+| `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
 
 ### Checks
 
 ```bash
-python test_aion2.py
+uv run python test_aion2.py
 ```
 
 16 checks, no network and no pytest — just `assert`s. Covers the server-population table parser,

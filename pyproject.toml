@@ -1,0 +1,23 @@
+[project]
+name = "aion2-api"
+version = "1.0.0"
+description = "Unofficial JSON API for AION 2 (Global): notices, in-game events and live server population."
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = [
+    "aion2",
+    "aion",
+    "ncsoft",
+    "mmorpg",
+    "api",
+    "fastapi",
+    "server-status",
+    "web-scraping",
+]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+]
+
+# No [build-system] on purpose: this is an application, not a distributable
+# package, so `uv sync` installs the dependencies and leaves the source in place.
