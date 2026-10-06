@@ -14,6 +14,12 @@ __pycache__/
 capture_xhr.js
 xhr_capture.json
 
+# Local-only: game-session packet capture and the analyser for it.
+# Contains your own session traffic - never publish, never commit.
+session.pcap
+*.pcap
+analyze_session.py
+
 # Editors and OS junk
 .vscode/
 .idea/
