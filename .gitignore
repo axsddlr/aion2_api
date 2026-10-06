@@ -1,0 +1,21 @@
+# Virtual environment - 30 MB of installed packages.
+# Recreate with: python -m venv .venv && pip install -r requirements.txt
+.venv/
+venv/
+env/
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local-only development helpers: kept on this machine, never published.
+# capture_xhr.js records a page's network traffic for re-checking the endpoints.
+capture_xhr.js
+xhr_capture.json
+
+# Editors and OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
