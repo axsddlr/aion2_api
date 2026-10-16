@@ -658,6 +658,102 @@ class Aion2Servers:
         return matches[0] if matches else None
 
 
+# --- characters ---------------------------------------------------------------
+# Reverse-engineered from https://aion2.plaync.com/en-us/characters/index (fan
+# sites such as aionflex.gg only proxy this, behind Cloudflare):
+#
+#   GET https://aion2.plaync.com/api/character/info
+#         ?region={naw|nae|eu|la|as}&lang=en-US&characterId={id}&serverId={n}
+#       -> {profile, stat: {statList}, title, ranking, daevanion}
+#   GET https://aion2.plaync.com/api/character/equipment   (same params)
+#       -> {equipment: {equipmentList, skinList}, petwing, skill: {skillList}}
+#
+# `region` is mandatory for Global and must be the real one, else a bare 404.
+CHARACTER_REGIONS = ["nae", "naw", "eu", "la", "as"]
+
+
+def parse_character_url(url: str) -> Dict[str, str]:
+    """Pull id/server/region out of an aionflex.gg (or similar) character link.
+
+    The id there is double-encoded ("...%253D"); one parse_qs + one unquote gives
+    the real id ("...="). Unquoting again is harmless, so raw ids work too.
+    """
+    q = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+    one = lambda k: (q.get(k) or [""])[0]
+    return {
+        "character_id": urllib.parse.unquote(one("id") or one("characterId")),
+        "server_id": one("server") or one("serverId"),
+        "region": one("region").lower(),
+    }
+
+
+def character_endpoint(
+    endpoint: str,
+    character_id: str,
+    server_id: str,
+    region: Optional[str] = None,
+    timeout: float = 25.0,
+    **extra: Any,
+) -> Tuple[Dict[str, Any], str]:
+    """GET /api/character/{endpoint} -> (data, region that answered).
+
+    Unknown/'global' region -> tries each real one; only a 404 moves on.
+    """
+    character_id = urllib.parse.unquote(character_id)
+    regions = [region] if region in CHARACTER_REGIONS else CHARACTER_REGIONS
+    headers = {**DEFAULT_HEADERS, "User-Agent": build_user_agent("character lookup")}
+    for r in regions:
+        params = {"region": r, "lang": "en-US", "characterId": character_id, "serverId": server_id}
+        try:
+            return get_json(f"{WEB_BASE}/api/character/{endpoint}", headers, timeout, {**params, **extra}), r
+        except Aion2ApiError as exc:
+            if exc.status != 404 or r == regions[-1]:
+                raise
+    raise AssertionError("unreachable")
+
+
+def get_character(
+    character_id: str, server_id: str, region: Optional[str] = None, timeout: float = 25.0
+) -> Dict[str, Any]:
+    """Character info + equipment merged."""
+    info, region = character_endpoint("info", character_id, server_id, region, timeout)
+    equipment, _ = character_endpoint("equipment", character_id, server_id, region, timeout)
+    return {**info, **equipment}
+
+
+def get_daevanion_board(
+    character_id: str, server_id: str, board_id: int, region: Optional[str] = None, timeout: float = 25.0
+) -> Dict[str, Any]:
+    """One Daevanion board: {nodeList, openStatEffectList, openSkillEffectList}.
+
+    nodeList is a full 15x15 grid; each node carries its own `row`/`col` (1-15)
+    and type None marks an empty cell. Board ids come from info['daevanion'].
+    """
+    data, _ = character_endpoint(
+        "daevanion/detail", character_id, server_id, region, timeout, boardId=board_id
+    )
+    return data
+
+
+def render_daevanion_board(nodes: List[Dict[str, Any]]) -> str:
+    """Text grid: S start, #/o stat and */+ skill (unlocked/locked), . empty."""
+    grid = {(n["row"], n["col"]): n for n in nodes if n.get("type") not in (None, "None")}
+    size = max((max(n["row"], n["col"]) for n in nodes), default=0)
+
+    def cell(n: Optional[Dict[str, Any]]) -> str:
+        if not n:
+            return "."
+        if n["type"] == "Start":
+            return "S"
+        if n["type"] == "SkillLevel":
+            return "*" if n.get("open") else "+"
+        return "#" if n.get("open") else "o"
+
+    return "\n".join(
+        " ".join(cell(grid.get((r, c))) for c in range(1, size + 1)) for r in range(1, size + 1)
+    )
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -730,9 +826,70 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--region", help="region filter, e.g. 'NA East', Europe, Asia")
     s.add_argument("--json", action="store_true")
 
+    s = sub.add_parser("character", help="character stats from an aionflex.gg link")
+    s.add_argument("url", help="e.g. https://aionflex.gg/character?id=...&server=1101&region=GLOBAL")
+    s.add_argument("--json", action="store_true", help="full raw info (gear titles, ranking, ...)")
+
+    s = sub.add_parser("daevanion", help="Daevanion boards from an aionflex.gg character link")
+    s.add_argument("url")
+    s.add_argument("--board", help="board name or id (omit to list boards)")
+    s.add_argument("--json", action="store_true")
+
     args = p.parse_args(argv)
 
     try:
+        if args.cmd == "daevanion":
+            c = parse_character_url(args.url)
+            info, region = character_endpoint("info", c["character_id"], c["server_id"], c["region"])
+            boards = (info.get("daevanion") or {}).get("boardList") or []
+            if not args.board:
+                for b in boards:
+                    print(
+                        f"{b['id']:>4}  {b['name']:12} {b['openNodeCount']:>3}/{b['totalNodeCount']:<3}"
+                        f" ({b['openPercent']}%)"
+                    )
+                return 0
+            want = args.board.lower()
+            board = next((b for b in boards if want in (str(b["id"]), b["name"].lower())), None)
+            if not board:
+                print(f"no board {args.board!r}; have: {', '.join(b['name'] for b in boards)}", file=sys.stderr)
+                return 1
+            data = get_daevanion_board(c["character_id"], c["server_id"], board["id"], region)
+            if args.json:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+                return 0
+            print(f"{board['name']} ({board['openPercent']}% open)\n")
+            print(render_daevanion_board(data.get("nodeList") or []))
+            effects = [e["desc"] for e in data.get("openStatEffectList") or [] if e.get("desc")]
+            effects += [e["desc"] for e in data.get("openSkillEffectList") or [] if e.get("desc")]
+            if effects:
+                print("\nBonuses:\n  " + "\n  ".join(effects))
+            return 0
+
+        if args.cmd == "character":
+            c = parse_character_url(args.url)
+            data = get_character(c["character_id"], c["server_id"], c["region"])
+            if args.json:
+                print(json.dumps(data, ensure_ascii=False, indent=2))
+                return 0
+            pr = data["profile"]
+            print(
+                f"{pr['characterName']}  Lv{pr['characterLevel']} {pr['className']}  "
+                f"{pr['serverName']} ({pr['raceName']})  CP {pr['combatPower']}"
+            )
+            for st in (data.get("stat") or {}).get("statList") or []:
+                extra = ", ".join(st.get("statSecondList") or [])
+                print(f"  {st['name']:28} {st['value']:>6}  {extra}")
+            eq = data.get("equipment") or {}
+            print("Gear:")
+            for it in eq.get("equipmentList") or []:
+                plus = f" +{it['enchantLevel']}" if it.get("enchantLevel") else ""
+                print(f"  {it['slotPosName']:12} {it['name']}{plus}  [{it.get('grade')}]")
+            wing = (data.get("petwing") or {}).get("wing") or {}
+            if wing.get("name"):
+                print(f"  {'Wings':12} {wing['name']}  [{wing.get('grade')}]")
+            return 0
+
         if args.cmd == "servers":
             items = Aion2Servers().servers(name=args.name, region=args.region)
             if args.json:

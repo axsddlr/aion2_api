@@ -365,6 +365,50 @@ def test_user_agent_contact_and_override():
         aion2_api.CONTACT, aion2_api._UA_OVERRIDE = real_contact, real_override
 
 
+def test_character_url_and_region_fallback():
+    c = aion2_api.parse_character_url(
+        "https://aionflex.gg/character?id=rKx%253D&server=1101&region=GLOBAL&name=s6x"
+    )
+    assert c == {"character_id": "rKx=", "server_id": "1101", "region": "global"}
+
+    tried = []
+
+    def fake_get_json(url, headers, timeout, params):
+        tried.append((url.rsplit("/", 1)[-1], params["region"]))
+        if params["region"] != "eu":
+            raise Aion2ApiError(404, url, "Resource not found")
+        assert params["characterId"] == "rKx="
+        return {"profile": {}} if url.endswith("/info") else {"equipment": {}}
+
+    real = aion2_api.get_json
+    aion2_api.get_json = fake_get_json
+    try:
+        got = aion2_api.get_character("rKx%3D", "1101", "global")
+        assert got == {"profile": {}, "equipment": {}}, got
+        # info probes regions; equipment reuses the one that answered.
+        assert tried == [("info", "nae"), ("info", "naw"), ("info", "eu"), ("equipment", "eu")], tried
+        tried.clear()
+        try:
+            aion2_api.get_character("rKx=", "1101", "as")
+            raise AssertionError("a known region must not fall back")
+        except Aion2ApiError:
+            assert tried == [("info", "as")]
+    finally:
+        aion2_api.get_json = real
+
+
+def test_daevanion_grid_uses_row_col():
+    nodes = [
+        {"row": r, "col": c, "type": "None", "open": 0} for r in range(1, 4) for c in range(1, 4)
+    ]
+    put = {(1, 2): ("Stat", 1), (2, 2): ("Start", 1), (3, 1): ("SkillLevel", 0), (3, 3): ("Stat", 0)}
+    for n in nodes:
+        if (n["row"], n["col"]) in put:
+            n["type"], n["open"] = put[(n["row"], n["col"])]
+    nodes.reverse()  # order must not matter: position comes from row/col only
+    assert aion2_api.render_daevanion_board(nodes) == ". # .\n. S .\n+ . o"
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for test in tests:
