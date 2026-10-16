@@ -135,9 +135,10 @@ _response_cache: Dict[str, Tuple[float, str]] = {}
 
 
 def clear_cache() -> None:
-    """Forget cached responses and the throttle clock."""
+    """Forget cached responses, resolved character names and the throttle clock."""
     _last_request.clear()
     _response_cache.clear()
+    _resolved.clear()
 
 
 def _throttle(url: str) -> None:
@@ -737,14 +738,50 @@ class CharacterLookupError(LookupError):
         self.candidates = candidates
 
 
+# Server ids are unique across Global and their 2nd digit is the region - checked
+# against https://aion2.plaync.com/en-us/api/gameinfo/servers?region=... for all
+# five (e.g. 1101 Siel and 2107 Ereshkigal are nae, 1505 Yustiel is as). Server
+# *names* repeat in every region, so only an id narrows the search.
+_REGION_BY_SERVER_DIGIT = {"1": "nae", "2": "naw", "3": "eu", "4": "la", "5": "as"}
+
+
+def region_for_server(server: Optional[str]) -> Optional[str]:
+    """'1101' -> 'nae'. None for a server name or an id outside the known pattern."""
+    s = (server or "").strip()
+    return _REGION_BY_SERVER_DIGIT.get(s[1]) if len(s) == 4 and s.isdigit() else None
+
+
+# Name -> ids rarely changes, and each fresh resolve can cost one search per region
+# (spaced 1s apart), so keep successful answers far longer than CACHE_TTL.
+RESOLVE_TTL = 3600.0
+_resolved: Dict[Tuple[str, str], Tuple[float, Dict[str, str]]] = {}
+
+
 def resolve_character(target: str, server: Optional[str] = None) -> Dict[str, str]:
     """A character link, or a name (optionally narrowed by server name/id) -> ids.
 
+    A server id searches only its region; a server name or none searches all five.
     Raises CharacterLookupError listing the candidates when the name is missing or ambiguous.
     """
     if "?" in target:
         return parse_character_url(target)
-    hits = [c for c in search_characters(target) if c["name"].lower() == target.lower()]
+    key = (target.lower(), (server or "").strip().lower())
+    cached = _resolved.get(key)
+    if cached and time.monotonic() - cached[0] < RESOLVE_TTL:
+        return dict(cached[1])
+    found_ids = _search_one(target, server)
+    if len(_resolved) >= MAX_CACHE_ENTRIES:
+        _resolved.clear()  # ponytail: same crude bound as the response cache
+    _resolved[key] = (time.monotonic(), found_ids)
+    return dict(found_ids)
+
+
+def _search_one(target: str, server: Optional[str]) -> Dict[str, str]:
+    hits = [
+        c
+        for c in search_characters(target, region_for_server(server))
+        if c["name"].lower() == target.lower()
+    ]
     if server:
         hits = [c for c in hits if server.lower() in (c["server_id"], (c["server_name"] or "").lower())]
     if len(hits) != 1:

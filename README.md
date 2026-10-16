@@ -119,7 +119,7 @@ The same lookup over the web API: `curl "http://127.0.0.1:8000/characters/s6x?se
 | `name` | `/servers` | – | Server name, e.g. `Israphel` |
 | `region` | `/servers` | – | Region, e.g. `NA East`, `Europe`, `Asia` |
 | `region` | `/characters/search` | all | One of `nae`, `naw`, `eu`, `la`, `as` |
-| `server` | `/characters/{name}...` | – | Server name or id, e.g. `Siel` or `1101` — needed when the name exists on more than one server |
+| `server` | `/characters/{name}...` | – | Server name or id, e.g. `Siel` or `1101` — needed when the name exists on more than one server. An id is faster: it searches one region instead of five |
 
 Available boards: `notice_en`, `notice_de`, `notice_fr`, `notice_es`, `notice_pt`.
 
@@ -328,6 +328,10 @@ print(render_daevanion_board(board["nodeList"]))  # 15x15 text grid
 
 - **Names are not unique.** The same name can exist on several servers. `resolve_character`
   raises `LookupError` listing the candidates; pass `server=` (name or id) to pick one.
+- **A server id is faster than a name.** Server ids are unique and encode the region
+  (`1101` → `nae`), so `server="1101"` searches one region (~2s) where `server="Siel"` has to
+  search all five (~6s) — server names repeat in every region. A resolved name is remembered
+  for an hour, so repeat lookups skip the search either way.
 - **`region` is optional.** Search already knows it. With only an id and server, the lookup
   tries `nae`, `naw`, `eu`, `la` and `as` until one answers (`region=GLOBAL` in a link is not a
   real region and is treated the same way).

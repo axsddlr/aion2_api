@@ -422,8 +422,15 @@ def test_resolve_character_by_name():
         {"character_id": "b=", "name": "s6xway", "level": 21, "server_id": "2107", "server_name": "Ereshkigal", "region": "nae"},
         {"character_id": "c=", "name": "S6X", "level": 24, "server_id": "1505", "server_name": "Yustiel", "region": "as"},
     ]
+    searched = []
+
+    def fake_search(name, region=None):
+        searched.append(region)
+        return [h for h in hits if region in (None, h["region"])]
+
+    aion2_api.clear_cache()
     real = aion2_api.search_characters
-    aion2_api.search_characters = lambda name: hits
+    aion2_api.search_characters = fake_search
     try:
         try:
             aion2_api.resolve_character("s6x")
@@ -431,15 +438,35 @@ def test_resolve_character_by_name():
         except LookupError as exc:
             assert "Siel" in str(exc) and "Yustiel" in str(exc) and "s6xway" not in str(exc)
         want = {"character_id": "a=", "server_id": "1101", "region": "nae"}
+        searched.clear()
         assert aion2_api.resolve_character("s6x", "siel") == want
+        assert searched == [None], "a server *name* can be in any region: search all"
+        searched.clear()
         assert aion2_api.resolve_character("S6X", "1101") == want
+        assert searched == ["nae"], f"a server id must search only its region, got {searched}"
+        searched.clear()
+        assert aion2_api.resolve_character("s6x", "1101") == want
+        assert searched == [], "a repeat lookup must come from the resolve cache"
         try:
             aion2_api.resolve_character("nobody")
             raise AssertionError("no match must raise")
         except LookupError:
             pass
+        searched.clear()
+        try:
+            aion2_api.resolve_character("nobody")
+        except LookupError:
+            pass
+        assert searched == [None], "failures are not cached - the character may appear later"
     finally:
         aion2_api.search_characters = real
+        aion2_api.clear_cache()
+    assert aion2_api.region_for_server("1101") == "nae"
+    assert aion2_api.region_for_server("2304") == "eu"
+    assert aion2_api.region_for_server("1505") == "as"
+    assert aion2_api.region_for_server("Siel") is None
+    assert aion2_api.region_for_server("1901") is None  # unknown digit -> search everywhere
+    assert aion2_api.region_for_server(None) is None
     # A link never hits search.
     assert aion2_api.resolve_character("https://x/character?id=z%253D&server=9")["character_id"] == "z="
 
