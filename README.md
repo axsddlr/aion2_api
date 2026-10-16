@@ -510,13 +510,13 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (20 checks, standard library only) covers the server-population table parser,
+`test_aion2.py` (22 checks, standard library only) covers the server-population table parser,
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
 (caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
 and the character code (link parsing, region fallback, server-id regions, name resolution and
 its cache, Daevanion grid placement).
 
-`test_app.py` (7 checks) drives the FastAPI app through its test client with the upstream calls
+`test_app.py` (9 checks) drives the FastAPI app through its test client with the upstream calls
 faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for
 an ambiguous name, `404` for an unknown name or board, board lookup by name or id, and how
 upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
