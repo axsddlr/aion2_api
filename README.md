@@ -496,20 +496,31 @@ sources and is not installed.
 |---|---|
 | `aion2_api.py` | The client library and CLI (notices, events, servers, characters). Standard library only. |
 | `app.py` | The FastAPI web service (`/notices`, `/events`, `/servers`, `/characters`). |
-| `test_aion2.py` | Offline checks. No network, no dependencies. |
-| `pyproject.toml` | Project metadata and the two dependencies the web service needs. |
+| `test_aion2.py` | Offline checks for the client and CLI. No network, no dependencies. |
+| `test_app.py` | Offline checks for the web API routes. Needs the dev dependency `httpx2`. |
+| `pyproject.toml` | Project metadata, the two dependencies the web service needs, and the `dev` group for tests. |
 | `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
 
 ### Checks
 
 ```bash
-uv run python test_aion2.py
+uv run python test_aion2.py   # client + CLI
+uv run python test_app.py     # web API routes
 ```
 
-19 checks, no network and no pytest — just `assert`s. Covers the server-population table parser,
+No network and no pytest — just `assert`s.
+
+`test_aion2.py` (20 checks, standard library only) covers the server-population table parser,
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
-(caching, per-host spacing, `Retry-After`, and not retrying a `403`), and the character code
-(link parsing, region fallback, name resolution, Daevanion grid placement).
+(caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
+and the character code (link parsing, region fallback, server-id regions, name resolution and
+its cache, Daevanion grid placement).
+
+`test_app.py` (7 checks) drives the FastAPI app through its test client with the upstream calls
+faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for
+an ambiguous name, `404` for an unknown name or board, board lookup by name or id, and how
+upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
+the `dev` group; the web service itself does not depend on it.
 
 ---
 
