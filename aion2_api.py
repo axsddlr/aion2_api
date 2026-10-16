@@ -720,10 +720,18 @@ def search_characters(
     return out
 
 
+class CharacterLookupError(LookupError):
+    """No match, or several; `candidates` holds the exact-name hits (maybe empty)."""
+
+    def __init__(self, message: str, candidates: List[Dict[str, Any]]):
+        super().__init__(message)
+        self.candidates = candidates
+
+
 def resolve_character(target: str, server: Optional[str] = None) -> Dict[str, str]:
     """A character link, or a name (optionally narrowed by server name/id) -> ids.
 
-    Raises LookupError listing the candidates when the name is missing or ambiguous.
+    Raises CharacterLookupError listing the candidates when the name is missing or ambiguous.
     """
     if "?" in target:
         return parse_character_url(target)
@@ -732,8 +740,9 @@ def resolve_character(target: str, server: Optional[str] = None) -> Dict[str, st
         hits = [c for c in hits if server.lower() in (c["server_id"], (c["server_name"] or "").lower())]
     if len(hits) != 1:
         found = ", ".join(f"{c['name']} ({c['server_name']} {c['server_id']}, {c['region']})" for c in hits)
-        raise LookupError(
-            f"{len(hits)} characters named {target!r}" + (f": {found}; pass --server" if hits else "")
+        raise CharacterLookupError(
+            f"{len(hits)} characters named {target!r}" + (f": {found}; pick a server" if hits else ""),
+            hits,
         )
     c = hits[0]
     return {"character_id": c["character_id"], "server_id": c["server_id"], "region": c["region"]}
@@ -785,6 +794,12 @@ def get_daevanion_board(
         "daevanion/detail", character_id, server_id, region, timeout, boardId=board_id
     )
     return data
+
+
+def find_board(boards: List[Dict[str, Any]], want: str) -> Optional[Dict[str, Any]]:
+    """A board from info['daevanion']['boardList'] by id or name (any case)."""
+    want = str(want).lower()
+    return next((b for b in boards if want in (str(b["id"]), b["name"].lower())), None)
 
 
 def render_daevanion_board(nodes: List[Dict[str, Any]]) -> str:
@@ -909,8 +924,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         f" ({b['openPercent']}%)"
                     )
                 return 0
-            want = args.board.lower()
-            board = next((b for b in boards if want in (str(b["id"]), b["name"].lower())), None)
+            board = find_board(boards, args.board)
             if not board:
                 print(f"no board {args.board!r}; have: {', '.join(b['name'] for b in boards)}", file=sys.stderr)
                 return 1

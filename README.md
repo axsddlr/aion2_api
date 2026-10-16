@@ -89,13 +89,11 @@ Gear:
   ...
 ```
 
-Characters are only in the Python client and CLI for now — the web API does not serve them.
+The same lookup over the web API: `curl "http://127.0.0.1:8000/characters/s6x?server=Siel"`.
 
 ---
 
 ## The web API
-
-Five addresses. Four return data.
 
 | Address | What you get |
 |---|---|
@@ -103,6 +101,10 @@ Five addresses. Four return data.
 | `GET /notices/{article_id}` | One notice, including its full text |
 | `GET /events` | Current in-game events |
 | `GET /servers` | Player counts for every server |
+| `GET /characters/search?name=` | Characters whose name contains `name` |
+| `GET /characters/{name}` | One character's stats, gear, skills, titles and ranking |
+| `GET /characters/{name}/daevanion` | That character's Daevanion boards |
+| `GET /characters/{name}/daevanion/{board}` | One board, node by node (`board` is a name like `Nezekan`, or an id) |
 | `GET /` | A reminder of the above |
 
 `/notices`, `/events` and `/servers` need no arguments at all. Everything else is optional:
@@ -116,6 +118,8 @@ Five addresses. Four return data.
 | `country` | `/events` | `US` | Country tag, e.g. `US`, `DE`, `FR`, `JP` |
 | `name` | `/servers` | – | Server name, e.g. `Israphel` |
 | `region` | `/servers` | – | Region, e.g. `NA East`, `Europe`, `Asia` |
+| `region` | `/characters/search` | all | One of `nae`, `naw`, `eu`, `la`, `as` |
+| `server` | `/characters/{name}...` | – | Server name or id, e.g. `Siel` or `1101` — needed when the name exists on more than one server |
 
 Available boards: `notice_en`, `notice_de`, `notice_fr`, `notice_es`, `notice_pt`.
 
@@ -133,6 +137,26 @@ curl "http://127.0.0.1:8000/servers"                            # every server's
 curl "http://127.0.0.1:8000/servers?name=Zikel"                 # that name in all 5 regions
 curl "http://127.0.0.1:8000/servers?name=Zikel&region=NA East"  # exactly one server
 curl "http://127.0.0.1:8000/servers?region=Asia"                # one region
+curl "http://127.0.0.1:8000/characters/search?name=s6x"         # who is called that, where
+curl "http://127.0.0.1:8000/characters/s6x?server=Siel"         # stats, gear, skills
+curl "http://127.0.0.1:8000/characters/s6x/daevanion?server=Siel"          # their boards
+curl "http://127.0.0.1:8000/characters/s6x/daevanion/Nezekan?server=Siel"  # one board
+```
+
+Character responses are NCSOFT's own JSON passed through — see
+[What the fields mean](#what-the-fields-mean). A name that exists on several servers answers
+`409` with the choices, so a client can show them and retry with `?server=`:
+
+```json
+{
+  "detail": "2 characters named 's6x': s6x (Siel 1101, nae), s6x (Yustiel 1505, as); pick a server",
+  "candidates": [
+    {"character_id": "rKx-d-9c8YwO5HqimeieGOdLR7ZXFay1iDzckIR5EsM=", "name": "s6x", "level": 45,
+     "server_id": "1101", "server_name": "Siel", "region": "nae"},
+    {"character_id": "Tm_y1mYmkY9R4VUZfgwDvyF6kOoq5gy78fVeyyQxqTM=", "name": "s6x", "level": 24,
+     "server_id": "1505", "server_name": "Yustiel", "region": "as"}
+  ]
+}
 ```
 
 ### What the responses look like
@@ -226,7 +250,8 @@ neighbouring article ids:
 
 | Status | Meaning |
 |---|---|
-| `404` | No such article, or a board name that does not exist (the message lists the valid ones) |
+| `404` | No such article, or a board name that does not exist (the message lists the valid ones), or no character with that exact name |
+| `409` | Several characters share that name — the body lists `candidates`; add `?server=` |
 | `422` | A parameter is out of range or unknown, e.g. `limit=999` or `status=NOPE` |
 | `502` | The upstream source failed or is unreachable |
 | `503` | Something upstream is blocking or rate-limiting us — wait and retry |
@@ -466,7 +491,7 @@ sources and is not installed.
 | File | What it is |
 |---|---|
 | `aion2_api.py` | The client library and CLI (notices, events, servers, characters). Standard library only. |
-| `app.py` | The FastAPI web service (`/notices`, `/notices/{id}`, `/events`, `/servers`). |
+| `app.py` | The FastAPI web service (`/notices`, `/events`, `/servers`, `/characters`). |
 | `test_aion2.py` | Offline checks. No network, no dependencies. |
 | `pyproject.toml` | Project metadata and the two dependencies the web service needs. |
 | `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
