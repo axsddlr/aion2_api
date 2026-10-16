@@ -1,7 +1,8 @@
-# AION 2 Notices, Events & Server Population API
+# AION 2 Notices, Events, Servers & Characters API
 
-Read AION 2 announcements, in-game events and live server population as clean JSON, instead of
-loading the website in a browser and copy-pasting out of a web page.
+Read AION 2 announcements, in-game events, live server population and any character's stats,
+gear and Daevanion boards as clean JSON, instead of loading the website in a browser and
+copy-pasting out of a web page.
 
 No API key, no account, no login. The data is public.
 
@@ -72,6 +73,23 @@ python aion2_api.py list -n 5
 2026-10-05  6ac3bfa5feeef62e67566809  Thank you for 400,000 Active Players
 2026-10-05  6ac3983171f8fb7c2a7a33b8  [Notice] Server Matchmaking Information (Asia)
 ```
+
+Or look up a character by name:
+
+```bash
+python aion2_api.py character s6x --server Siel
+```
+
+```
+s6x  Lv45 Chanter  Siel (Elyos)  CP 48326
+  Might                            25  Attack increase +2.5%
+  ...
+Gear:
+  MainHand     Spiritforged Staff +11  [Unique]
+  ...
+```
+
+Characters are only in the Python client and CLI for now — the web API does not serve them.
 
 ---
 
@@ -258,6 +276,40 @@ servers.servers(name="Zikel")                   # this name in every region (5 r
 servers.server("Zikel", region="NA East")       # one server
 ```
 
+### Characters
+
+Look a character up by **name**, or paste a character link from a fan site such as
+[aionflex.gg](https://aionflex.gg) (anything with `?id=...&server=...` works). Either way the
+data comes straight from NCSOFT — the link is only a way to carry the character id.
+
+```python
+from aion2_api import (
+    resolve_character, get_character, get_daevanion_board, render_daevanion_board,
+)
+
+c = resolve_character("s6x", server="Siel")     # or a link; -> character_id, server_id, region
+data = get_character(c["character_id"], c["server_id"], c["region"])
+
+print(data["profile"]["className"], data["profile"]["combatPower"])
+for stat in data["stat"]["statList"]:            # Might, Dexterity, ... Item Level
+    print(stat["name"], stat["value"], stat["statSecondList"])
+for item in data["equipment"]["equipmentList"]:  # one per equipped slot
+    print(item["slotPosName"], item["name"], item["enchantLevel"], item["grade"])
+
+boards = data["daevanion"]["boardList"]          # this character's boards (ids like 81, 82, ...)
+board = get_daevanion_board(c["character_id"], c["server_id"], boards[0]["id"], c["region"])
+print(render_daevanion_board(board["nodeList"]))  # 15x15 text grid
+```
+
+- **Names are not unique.** The same name can exist on several servers. `resolve_character`
+  raises `LookupError` listing the candidates; pass `server=` (name or id) to pick one.
+- **`region` is optional.** Search already knows it. With only an id and server, the lookup
+  tries `nae`, `naw`, `eu`, `la` and `as` until one answers (`region=GLOBAL` in a link is not a
+  real region and is treated the same way).
+- **Board nodes place themselves.** Every node in `nodeList` carries its own `row` and `col`
+  (1–15); `type` `None` marks an empty cell. Draw them on a 15×15 grid and the board's shape
+  appears.
+
 ### Command line
 
 ```bash
@@ -275,7 +327,17 @@ python aion2_api.py servers                     # every server's population
 python aion2_api.py servers --name Zikel        # that name in all regions
 python aion2_api.py servers --name Zikel --region "NA East"
 python aion2_api.py servers --json              # as JSON
+python aion2_api.py character s6x --server Siel # stats + gear (server: name or id)
+python aion2_api.py character "<character link>" # same, from an aionflex.gg-style link
+python aion2_api.py character s6x --server Siel --json  # everything: titles, ranking, skills, pet
+python aion2_api.py daevanion s6x --server Siel # list the character's Daevanion boards
+python aion2_api.py daevanion s6x --server Siel --board nezekan  # draw one (name or id)
 ```
+
+`daevanion --board` prints the board as a grid: `S` start, `#`/`o` stat node and `*`/`+` skill
+node (unlocked/locked), `.` empty — followed by the bonuses unlocked on it.
+
+Quote links in the shell — they contain `&`.
 
 `python aion2_api.py --help` lists everything.
 
@@ -334,6 +396,37 @@ Server fields (`/servers`):
 `name` alone is **not** unique — every server name exists once per region, so `name` + `region`
 is the real key.
 
+Character data (`get_character`) is NCSOFT's own JSON, passed through unchanged — two responses
+merged into one dict:
+
+| Key | From | Contains |
+|---|---|---|
+| `profile` | info | Name, level, class, race, server, combat power, title, profile image |
+| `stat.statList[]` | info | `name`, `value`, `type` and the bonus text in `statSecondList` |
+| `title`, `ranking` | info | Titles and ranking entries |
+| `daevanion.boardList[]` | info | Board `id`, `name`, `openNodeCount` / `totalNodeCount`, `openPercent` |
+| `equipment.equipmentList[]` | equipment | Equipped items: `slotPosName`, `name`, `enchantLevel`, `grade`, `icon` |
+| `equipment.skinList[]` | equipment | Cosmetic skins |
+| `petwing` | equipment | `pet`, `wing`, `wingSkin` |
+| `skill.skillList[]` | equipment | Skills with `skillLevel`, `category`, `equip` |
+
+A Daevanion board (`get_daevanion_board`) has `nodeList[]` (`row`, `col`, `type` —
+`Start`/`Stat`/`SkillLevel`/`None`, `open`, `grade`, `name`, `effectList`) plus
+`openStatEffectList` and `openSkillEffectList`.
+
+Endpoints behind them (no key, no login):
+
+| Call | Endpoint |
+|---|---|
+| Search by name | `GET https://api-search.plaync.com/aion2global/search/v2/character?keyword=&region=&localeInfo=en-US` |
+| Info | `GET https://aion2.plaync.com/api/character/info?region=&lang=en-US&characterId=&serverId=` |
+| Equipment | `GET https://aion2.plaync.com/api/character/equipment` (same parameters) |
+| Daevanion board | `GET https://aion2.plaync.com/api/character/daevanion/detail` (same, plus `boardId=`) |
+
+`region` must be the real one (`nae`, `naw`, `eu`, `la`, `as`) or the answer is a bare `404`.
+Character ids end in `=`; search returns them already encoded (`%3D`) and fan-site links
+double-encode them (`%253D`) — the client undoes both.
+
 ---
 
 ## Rate limits and politeness
@@ -372,7 +465,7 @@ sources and is not installed.
 
 | File | What it is |
 |---|---|
-| `aion2_api.py` | The client library and CLI. Standard library only. |
+| `aion2_api.py` | The client library and CLI (notices, events, servers, characters). Standard library only. |
 | `app.py` | The FastAPI web service (`/notices`, `/notices/{id}`, `/events`, `/servers`). |
 | `test_aion2.py` | Offline checks. No network, no dependencies. |
 | `pyproject.toml` | Project metadata and the two dependencies the web service needs. |
@@ -384,9 +477,10 @@ sources and is not installed.
 uv run python test_aion2.py
 ```
 
-16 checks, no network and no pytest — just `assert`s. Covers the server-population table parser,
-the notice paging, the locale mapping, the event status maths, and the rate-limit behaviour
-(caching, per-host spacing, `Retry-After`, and not retrying a `403`).
+19 checks, no network and no pytest — just `assert`s. Covers the server-population table parser,
+the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
+(caching, per-host spacing, `Retry-After`, and not retrying a `403`), and the character code
+(link parsing, region fallback, name resolution, Daevanion grid placement).
 
 ---
 
@@ -397,6 +491,9 @@ the notice paging, the locale mapping, the event status maths, and the rate-limi
 - **`/servers` reads a fan site, not NCSOFT.** [aion2.gaming.tools](https://aion2.gaming.tools/server-status)
   is an unaffiliated community project, and that page is plain HTML, so this is the most fragile
   endpoint: it breaks if the page is redesigned, and it is rate-limited. Cache it.
+- **Name search reads one page.** The first 20 results per region. If many longer names contain
+  the one you want, it can fall off that page and you get "0 characters named ..." — use a link
+  or the character id instead.
 - **Be polite.** It is public data, but do not hammer it. Results are cached for 60 seconds.
 - **`502` is often just a blip.** A dropped connection or DNS hiccup on your side surfaces as
   `502`. Trying again usually works.
