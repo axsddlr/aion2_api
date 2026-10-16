@@ -265,6 +265,25 @@ def test_throttle_spaces_requests_per_host():
         aion2_api.clear_cache()
 
 
+def test_throttle_gives_concurrent_callers_separate_slots():
+    """Callers that arrive together (threadpool) each get their own slot.
+
+    With sleep faked, time does not move - exactly like several threads hitting
+    the throttle at the same instant. The 2nd must wait ~1 interval, the 3rd ~2.
+    """
+    aion2_api.clear_cache()
+    calls, sleeps, originals = with_fakes([])
+    try:
+        for _ in range(3):
+            aion2_api._throttle("https://example.test/x")
+        step = aion2_api.MIN_REQUEST_INTERVAL
+        assert len(sleeps) == 2, sleeps
+        assert abs(sleeps[0] - step) < 0.1 and abs(sleeps[1] - 2 * step) < 0.1, sleeps
+    finally:
+        restore(originals)
+        aion2_api.clear_cache()
+
+
 def test_retry_honours_retry_after():
     aion2_api.clear_cache()
     # A 7s Retry-After can only come from the header - the throttle would be ~1s -

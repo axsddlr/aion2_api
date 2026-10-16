@@ -30,6 +30,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -128,7 +129,8 @@ def strip_html(fragment: Optional[str]) -> str:
 
 # --- the single place every request goes through ----------------------------
 
-_last_request: Dict[str, float] = {}
+_last_request: Dict[str, float] = {}  # host -> time its latest request may go out
+_throttle_lock = threading.Lock()
 _response_cache: Dict[str, Tuple[float, str]] = {}
 
 
@@ -139,12 +141,19 @@ def clear_cache() -> None:
 
 
 def _throttle(url: str) -> None:
-    """Wait if we called this host too recently."""
+    """Wait if we called this host too recently.
+
+    Thread-safe (the web API calls this from a threadpool): each caller reserves
+    the next free slot for the host under the lock, then sleeps outside it, so
+    simultaneous requests are spaced out instead of all going at once.
+    """
     host = urllib.parse.urlsplit(url).netloc
-    waited = time.monotonic() - _last_request.get(host, 0.0)
-    if waited < MIN_REQUEST_INTERVAL:
-        time.sleep(MIN_REQUEST_INTERVAL - waited)
-    _last_request[host] = time.monotonic()
+    with _throttle_lock:
+        now = time.monotonic()
+        slot = max(now, _last_request.get(host, 0.0) + MIN_REQUEST_INTERVAL)
+        _last_request[host] = slot
+    if slot > now:
+        time.sleep(slot - now)
 
 
 def retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float:
