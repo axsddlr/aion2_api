@@ -20,6 +20,9 @@ session.pcap
 *.pcap
 analyze_session.py
 
+# Personal Claude Code settings for this checkout
+.claude/settings.local.json
+
 # Editors and OS junk
 .vscode/
 .idea/
