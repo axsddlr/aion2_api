@@ -397,6 +397,34 @@ def test_character_url_and_region_fallback():
         aion2_api.get_json = real
 
 
+def test_resolve_character_by_name():
+    hits = [
+        {"character_id": "a=", "name": "s6x", "level": 45, "server_id": "1101", "server_name": "Siel", "region": "nae"},
+        {"character_id": "b=", "name": "s6xway", "level": 21, "server_id": "2107", "server_name": "Ereshkigal", "region": "nae"},
+        {"character_id": "c=", "name": "S6X", "level": 24, "server_id": "1505", "server_name": "Yustiel", "region": "as"},
+    ]
+    real = aion2_api.search_characters
+    aion2_api.search_characters = lambda name: hits
+    try:
+        try:
+            aion2_api.resolve_character("s6x")
+            raise AssertionError("two exact matches must be ambiguous")
+        except LookupError as exc:
+            assert "Siel" in str(exc) and "Yustiel" in str(exc) and "s6xway" not in str(exc)
+        want = {"character_id": "a=", "server_id": "1101", "region": "nae"}
+        assert aion2_api.resolve_character("s6x", "siel") == want
+        assert aion2_api.resolve_character("S6X", "1101") == want
+        try:
+            aion2_api.resolve_character("nobody")
+            raise AssertionError("no match must raise")
+        except LookupError:
+            pass
+    finally:
+        aion2_api.search_characters = real
+    # A link never hits search.
+    assert aion2_api.resolve_character("https://x/character?id=z%253D&server=9")["character_id"] == "z="
+
+
 def test_daevanion_grid_uses_row_col():
     nodes = [
         {"row": r, "col": c, "type": "None", "open": 0} for r in range(1, 4) for c in range(1, 4)

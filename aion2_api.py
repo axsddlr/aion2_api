@@ -687,6 +687,58 @@ def parse_character_url(url: str) -> Dict[str, str]:
     }
 
 
+# Name -> id. Global search wants one real region per call, plus a locale:
+#   GET https://api-search.plaync.com/aion2global/search/v2/character
+#         ?keyword={name}&region={nae|...}&localeInfo=en-US
+#       -> {list: [{characterId, name (with <strong> highlight), serverId, ...}]}
+SEARCH_BASE = "https://api-search.plaync.com/aion2global/search/v2/character"
+
+
+def search_characters(
+    name: str, region: Optional[str] = None, timeout: float = 25.0
+) -> List[Dict[str, Any]]:
+    """Characters whose name contains `name`, across one or all Global regions.
+
+    ponytail: first page (20) per region only; an exact name can fall off it if
+    many longer names contain it. Page through `pagination` if that bites.
+    """
+    headers = {**DEFAULT_HEADERS, "User-Agent": build_user_agent("character search")}
+    out: List[Dict[str, Any]] = []
+    for r in [region] if region in CHARACTER_REGIONS else CHARACTER_REGIONS:
+        data = get_json(SEARCH_BASE, headers, timeout, {"keyword": name, "region": r, "localeInfo": "en-US"})
+        for c in data.get("list") or []:
+            out.append(
+                {
+                    "character_id": urllib.parse.unquote(c["characterId"]),  # arrives as "...%3D"
+                    "name": strip_html(c.get("name")),
+                    "level": c.get("level"),
+                    "server_id": str(c.get("serverId")),
+                    "server_name": c.get("serverName"),
+                    "region": c.get("region") or r,
+                }
+            )
+    return out
+
+
+def resolve_character(target: str, server: Optional[str] = None) -> Dict[str, str]:
+    """A character link, or a name (optionally narrowed by server name/id) -> ids.
+
+    Raises LookupError listing the candidates when the name is missing or ambiguous.
+    """
+    if "?" in target:
+        return parse_character_url(target)
+    hits = [c for c in search_characters(target) if c["name"].lower() == target.lower()]
+    if server:
+        hits = [c for c in hits if server.lower() in (c["server_id"], (c["server_name"] or "").lower())]
+    if len(hits) != 1:
+        found = ", ".join(f"{c['name']} ({c['server_name']} {c['server_id']}, {c['region']})" for c in hits)
+        raise LookupError(
+            f"{len(hits)} characters named {target!r}" + (f": {found}; pass --server" if hits else "")
+        )
+    c = hits[0]
+    return {"character_id": c["character_id"], "server_id": c["server_id"], "region": c["region"]}
+
+
 def character_endpoint(
     endpoint: str,
     character_id: str,
@@ -826,20 +878,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--region", help="region filter, e.g. 'NA East', Europe, Asia")
     s.add_argument("--json", action="store_true")
 
-    s = sub.add_parser("character", help="character stats from an aionflex.gg link")
-    s.add_argument("url", help="e.g. https://aionflex.gg/character?id=...&server=1101&region=GLOBAL")
+    s = sub.add_parser("character", help="character stats and gear, by name or link")
+    s.add_argument("target", help="character name, or a link like https://aionflex.gg/character?id=...&server=1101")
+    s.add_argument("--server", help="server name or id, when the name exists on several")
     s.add_argument("--json", action="store_true", help="full raw info (gear titles, ranking, ...)")
 
-    s = sub.add_parser("daevanion", help="Daevanion boards from an aionflex.gg character link")
-    s.add_argument("url")
+    s = sub.add_parser("daevanion", help="Daevanion boards, by character name or link")
+    s.add_argument("target", help="character name or link")
+    s.add_argument("--server", help="server name or id, when the name exists on several")
     s.add_argument("--board", help="board name or id (omit to list boards)")
     s.add_argument("--json", action="store_true")
 
     args = p.parse_args(argv)
 
     try:
+        if args.cmd in ("character", "daevanion"):
+            try:
+                c = resolve_character(args.target, args.server)
+            except LookupError as exc:
+                print(exc, file=sys.stderr)
+                return 1
+
         if args.cmd == "daevanion":
-            c = parse_character_url(args.url)
             info, region = character_endpoint("info", c["character_id"], c["server_id"], c["region"])
             boards = (info.get("daevanion") or {}).get("boardList") or []
             if not args.board:
@@ -867,7 +927,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         if args.cmd == "character":
-            c = parse_character_url(args.url)
             data = get_character(c["character_id"], c["server_id"], c["region"])
             if args.json:
                 print(json.dumps(data, ensure_ascii=False, indent=2))
