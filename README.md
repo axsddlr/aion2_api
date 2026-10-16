@@ -465,7 +465,7 @@ it lives in one place (`_fetch()` in `aion2_api.py`) so every client gets it.
 
 | Measure | Default | Why |
 |---|---|---|
-| Proper User-Agent | `aion2-api/1.0 (notices board)` | `product/version (comment)`, one per source. Says what is calling. |
+| Proper User-Agent | `aion2-api/1.0.0 (notices board)` | `product/version (comment)`, one per source. Says what is calling. |
 | Matching `Accept` | JSON for the APIs, HTML for the scrape | Each source is told what we want back. |
 | Spacing per host | 1 second | Two requests to one host are never sent closer together than this. |
 | Response cache | 60 seconds | A repeat read is served locally and never reaches them. |
@@ -479,7 +479,7 @@ Two optional environment variables:
 
 | Variable | Effect |
 |---|---|
-| `AION2_CONTACT` | Added to every User-Agent, e.g. `aion2-api/1.0 (notices board; +https://you.example)`. **Set this** if you deploy publicly. |
+| `AION2_CONTACT` | Added to every User-Agent, e.g. `aion2-api/1.0.0 (notices board; +https://you.example)`. **Set this** if you deploy publicly. |
 | `AION2_USER_AGENT` | Replaces the whole User-Agent for every source, if you need full control. |
 
 Tune `MIN_REQUEST_INTERVAL`, `CACHE_TTL` and `MAX_RETRIES` at the top of `aion2_api.py`.

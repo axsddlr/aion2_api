@@ -67,7 +67,7 @@ def locale_for_board(board_alias: str, default: str = "en-us") -> str:
 # you read can reach you. Set AION2_CONTACT to a URL or email and it is included;
 # AION2_USER_AGENT replaces the whole string for every source if you need that.
 APP_NAME = "aion2-api"
-APP_VERSION = "1.0"
+APP_VERSION = "1.0.0"  # the one version: app.py imports it, pyproject.toml must match (tested)
 CONTACT = os.environ.get("AION2_CONTACT", "").strip()
 _UA_OVERRIDE = os.environ.get("AION2_USER_AGENT", "").strip()
 
@@ -1033,8 +1033,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(json.dumps(board.board_info(), ensure_ascii=False, indent=2))
         elif args.cmd == "pinned":
             items = [board.normalize(i) for i in board.pinned()]
-            print(json.dumps(items, ensure_ascii=False, indent=2) if args.json else "")
-            if not args.json:
+            if args.json:
+                print(json.dumps(items, ensure_ascii=False, indent=2))
+            else:
                 _print_table(items)
         elif args.cmd == "list":
             items = list(board.iter_notices(limit=args.limit, size=args.size))

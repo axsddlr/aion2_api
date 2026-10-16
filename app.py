@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from aion2_api import (
+    APP_VERSION,
     DEFAULT_BOARD,
     GLOBAL_BOARDS,
     Aion2ApiError,
@@ -44,7 +45,7 @@ from aion2_api import (
 
 app = FastAPI(
     title="AION 2 Notices, Events, Servers & Characters",
-    version="3.0.0",
+    version=APP_VERSION,
     description=(
         "Unofficial read-only JSON API for AION 2.\n\n"
         "* **GET /notices** — newest notices, or `?board=notice_de` for another language\n"
@@ -226,7 +227,7 @@ def notices(
     board: Aion2Board = Depends(get_board),
 ) -> List[Notice]:
     if pinned:
-        return [Notice(**board.normalize(item)) for item in board.pinned()]
+        return [Notice(**board.normalize(item)) for item in board.pinned()[:limit]]
     return [Notice(**n) for n in board.iter_notices(limit=limit)]
 
 

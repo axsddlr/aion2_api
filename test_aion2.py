@@ -7,6 +7,9 @@ the real gaming.tools table, including the awkward bits: a name, a tooltipped
 badge and a note sharing one cell, and a "-" where a number would be.
 """
 
+import contextlib
+import io
+import os
 import re
 from io import BytesIO
 from urllib.error import HTTPError
@@ -372,10 +375,10 @@ def test_user_agent_contact_and_override():
     try:
         aion2_api.CONTACT, aion2_api._UA_OVERRIDE = "https://example.com/me", ""
         with_contact = aion2_api.build_user_agent("notices board")
-        assert with_contact == "aion2-api/1.0 (notices board; +https://example.com/me)"
+        assert with_contact == "aion2-api/1.0.0 (notices board; +https://example.com/me)"
 
         aion2_api.CONTACT = ""
-        assert aion2_api.build_user_agent("notices board") == "aion2-api/1.0 (notices board)"
+        assert aion2_api.build_user_agent("notices board") == "aion2-api/1.0.0 (notices board)"
 
         aion2_api._UA_OVERRIDE = "custom/9.9 (mine)"
         assert aion2_api.build_user_agent("notices board") == "custom/9.9 (mine)"
@@ -469,6 +472,34 @@ def test_resolve_character_by_name():
     assert aion2_api.region_for_server(None) is None
     # A link never hits search.
     assert aion2_api.resolve_character("https://x/character?id=z%253D&server=9")["character_id"] == "z="
+
+
+def test_version_matches_pyproject():
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml"), encoding="utf-8") as f:
+        m = re.search(r'^version\s*=\s*"([^"]+)"', f.read(), re.M)
+    assert m and m.group(1) == aion2_api.APP_VERSION, (m and m.group(1), aion2_api.APP_VERSION)
+
+
+def test_cli_pinned_prints_no_stray_blank_line():
+    class FakeBoard:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def pinned(self):
+            return [{"id": "x1"}]
+
+        def normalize(self, item):
+            return {"id": item["id"], "title": "Maintenance", "posted_at": "2026-10-07T20:00:00Z"}
+
+    real = aion2_api.Aion2Board
+    aion2_api.Aion2Board = FakeBoard
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            assert aion2_api.main(["pinned"]) == 0
+    finally:
+        aion2_api.Aion2Board = real
+    assert out.getvalue() == "2026-10-07  x1  Maintenance\n", repr(out.getvalue())
 
 
 def test_daevanion_grid_uses_row_col():

@@ -139,6 +139,29 @@ def test_upstream_errors_map_to_http_statuses():
             assert r.status_code == expected, (upstream, r.status_code, r.text)
 
 
+def test_pinned_notices_respect_limit():
+    class FakeBoard:
+        def pinned(self):
+            return [{"id": str(i)} for i in range(5)]
+
+        def normalize(self, item):
+            return {"id": item["id"], "title": f"Notice {item['id']}", "url": "https://x"}
+
+    app.app.dependency_overrides[app.get_board] = lambda: FakeBoard()
+    try:
+        r = client.get("/notices", params={"pinned": "true", "limit": 2})
+        assert r.status_code == 200, r.text
+        assert [n["id"] for n in r.json()] == ["0", "1"]
+        assert len(client.get("/notices", params={"pinned": "true"}).json()) == 5, "default limit keeps all 5"
+    finally:
+        app.app.dependency_overrides.clear()
+
+
+def test_app_reports_the_shared_version():
+    assert app.app.version == app.APP_VERSION
+    assert client.get("/openapi.json").json()["info"]["version"] == app.APP_VERSION
+
+
 def test_root_lists_character_routes():
     r = client.get("/")
     assert r.status_code == 200
