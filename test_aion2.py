@@ -57,11 +57,77 @@ FIXTURE = """
 """
 
 
+# The page does not always render the population columns. Those four are optional
+# and must degrade to None rather than take the whole /servers endpoint down.
+FIXTURE_NO_POPULATION = """
+<table>
+<thead><tr>
+  <th><span>Status</span></th><th><span>Server</span></th><th><span>Faction</span></th>
+  <th><span>Region</span></th>
+</tr></thead>
+<tbody>
+<tr>
+  <td><span>Online</span></td>
+  <td><div><span>Israphel</span></div></td>
+  <td><span>Asmodian</span></td>
+  <td><span>Europe</span></td>
+</tr>
+<tr>
+  <td><span>Online</span></td>
+  <td><div><span>Siel</span> <span title="Advanced Access">EA</span></div></td>
+  <td><span>Elyos</span></td>
+  <td><span>NA East</span></td>
+</tr>
+</tbody>
+</table>
+"""
+
+# A partial drop: the population bar survives, but the counts are gone.
+FIXTURE_POPULATION_ONLY = """
+<table>
+<thead><tr>
+  <th><span>Status</span></th><th><span>Server</span></th><th><span>Faction</span></th>
+  <th><span>Region</span></th><th><span>Population</span></th>
+</tr></thead>
+<tbody>
+<tr>
+  <td><span>Online</span></td>
+  <td><div><span>Israphel</span></div></td>
+  <td><span>Asmodian</span></td>
+  <td><span>Europe</span></td>
+  <td><div><div style="width: 52%"></div></div></td>
+</tr>
+</tbody>
+</table>
+"""
+
+# Without Region a row can no longer be identified, so that stays a hard error.
+FIXTURE_MISSING_REQUIRED = """
+<table>
+<thead><tr>
+  <th><span>Status</span></th><th><span>Server</span></th><th><span>Faction</span></th>
+</tr></thead>
+<tbody>
+<tr>
+  <td><span>Online</span></td>
+  <td><div><span>Israphel</span></div></td>
+  <td><span>Asmodian</span></td>
+</tr>
+</tbody>
+</table>
+"""
+
+
+def servers_from(html):
+    """Aion2Servers with its network call replaced by `html`."""
+    client = Aion2Servers()
+    client.html = lambda: html
+    return client
+
+
 def fixture_servers():
     """Aion2Servers with its network call replaced by FIXTURE."""
-    client = Aion2Servers()
-    client.html = lambda: FIXTURE
-    return client
+    return servers_from(FIXTURE)
 
 
 def test_strip_html():
@@ -103,6 +169,45 @@ def test_server_filters():
     assert client.servers(name="Nobody") == []
     assert client.server("Nobody") is None
     assert client.server("Israphel", region="Europe")["region"] == "Europe"
+
+
+def test_server_table_without_population_columns():
+    rows = servers_from(FIXTURE_NO_POPULATION).servers()
+    assert len(rows) == 2, rows
+
+    first, second = rows
+    assert first["name"] == "Israphel"
+    assert first["faction"] == "Asmodian"
+    assert first["region"] == "Europe"
+    # an absent column is unknown, not zero
+    assert first["population_percent"] is None
+    assert first["current"] is None and first["max"] is None
+    assert first["queue"] is None
+
+    # badges and notes still come out of the name cell
+    assert second["name"] == "Siel"
+    assert second["badges"] == ["Advanced Access"]
+    assert second["note"] is None
+    assert second["region"] == "NA East"
+
+
+def test_server_table_with_only_some_population_columns():
+    rows = servers_from(FIXTURE_POPULATION_ONLY).servers()
+    assert len(rows) == 1, rows
+    row = rows[0]
+    assert row["name"] == "Israphel"
+    # the surviving column still parses
+    assert row["population_percent"] == 52.0
+    assert row["current"] is None and row["max"] is None and row["queue"] is None
+
+
+def test_server_table_missing_required_column_raises():
+    try:
+        servers_from(FIXTURE_MISSING_REQUIRED).servers()
+    except Aion2ApiError as exc:
+        assert "unexpected table columns" in str(exc)
+    else:
+        raise AssertionError("a missing required column must still raise Aion2ApiError")
 
 
 def test_event_status():

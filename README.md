@@ -415,15 +415,20 @@ Server fields (`/servers`):
 | `status` | `Online` (or `Offline`) |
 | `faction` | `Asmodian` or `Elyos` — each server houses only one |
 | `region` | `Europe`, `NA East`, `NA West`, `Asia` or `SA` |
-| `population_percent` | How full the server is |
-| `current` | Players online now |
-| `max` | Server capacity |
+| `population_percent` | How full the server is — `null` if the site omits that column |
+| `current` | Players online now — `null` if the site omits that column |
+| `max` | Server capacity — `null` if the site omits that column |
 | `queue` | Login queue, or `null` when there is none |
 | `badges` | Access flags, e.g. `Advanced Access` |
 | `note` | Site note, e.g. `Character creation blocked` |
 
 `name` alone is **not** unique — every server name exists once per region, so `name` + `region`
 is the real key.
+
+The four population columns are **optional**. The page does not always render them, so any of
+`population_percent`, `current`, `max` and `queue` can be `null` in an otherwise valid response —
+treat `null` as "not published", never as zero. `name`, `status`, `faction` and `region` are always
+present; if one of those disappears the table has really changed and `/servers` returns a `502`.
 
 Character data (`get_character`) is NCSOFT's own JSON, passed through unchanged — two responses
 merged into one dict:
@@ -500,6 +505,7 @@ sources and is not installed.
 | `test_app.py` | Offline checks for the web API routes. Needs the dev dependency `httpx2`. |
 | `pyproject.toml` | Project metadata, the two dependencies the web service needs, and the `dev` group for tests. |
 | `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
+| `LICENSE` | MIT. Use the code, ship it, fork it — keep the copyright notice. |
 
 ### Checks
 
@@ -510,16 +516,18 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (22 checks, standard library only) covers the server-population table parser,
+`test_aion2.py` (25 checks, standard library only) covers the server-population table parser
+(including a page that drops the optional population columns, and one that drops a required one),
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
 (caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
 and the character code (link parsing, region fallback, server-id regions, name resolution and
 its cache, Daevanion grid placement).
 
-`test_app.py` (9 checks) drives the FastAPI app through its test client with the upstream calls
+`test_app.py` (10 checks) drives the FastAPI app through its test client with the upstream calls
 faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for
-an ambiguous name, `404` for an unknown name or board, board lookup by name or id, and how
-upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
+an ambiguous name, `404` for an unknown name or board, a `/servers` response whose optional
+population columns are `null`, board lookup by name or id, and how upstream failures map to
+`404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
 the `dev` group; the web service itself does not depend on it.
 
 ---
@@ -540,3 +548,15 @@ the `dev` group; the web service itself does not depend on it.
 - **View counts drift.** `view_count` goes up when the notice is read, so it changes between runs
   and is never perfectly stable.
 - **Read-only.** This only reads data. It cannot post, comment, or log in.
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, modify it, ship it, embed it in your own project; just keep
+the copyright notice. No warranty.
+
+That covers the **code in this repository**. The **data** is not ours: notices, events and character
+data belong to NCSOFT, and the server-population table comes from
+[aion2.gaming.tools](https://aion2.gaming.tools/server-status), an unaffiliated community site.
+Credit them, respect their terms, and keep your requests polite.

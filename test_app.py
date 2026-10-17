@@ -139,6 +139,35 @@ def test_upstream_errors_map_to_http_statuses():
             assert r.status_code == expected, (upstream, r.status_code, r.text)
 
 
+def test_servers_with_missing_population_is_200_not_502():
+    """A page that omits the population columns degrades to nulls, not a 502."""
+
+    class FakeServers:
+        def servers(self, name=None, region=None):
+            return [
+                {
+                    "name": "Israphel",
+                    "status": "Online",
+                    "faction": "Asmodian",
+                    "region": "Europe",
+                    "population_percent": None,
+                    "current": None,
+                    "max": None,
+                    "queue": None,
+                    "badges": [],
+                    "note": None,
+                }
+            ]
+
+    with fakes(Aion2Servers=FakeServers):
+        r = client.get("/servers")
+    assert r.status_code == 200, r.text
+    row = r.json()[0]
+    assert row["name"] == "Israphel" and row["region"] == "Europe"
+    assert row["population_percent"] is None
+    assert row["current"] is None and row["max"] is None and row["queue"] is None
+
+
 def test_pinned_notices_respect_limit():
     class FakeBoard:
         def pinned(self):

@@ -612,6 +612,9 @@ class Aion2Servers:
 
         A server name on its own is ambiguous - the same name exists in every
         region, so pass `region` too when you want exactly one.
+
+        `population_percent`, `current`, `max` and `queue` are None when the page
+        does not render those columns.
         """
         parser = _ServerTableParser()
         parser.feed(self.html())
@@ -619,22 +622,28 @@ class Aion2Servers:
             raise Aion2ApiError(0, self.url, "no server table found on the page")
 
         columns = [_cell_text(c) for c in parser.headers]
-        try:
-            idx = {c: i for i, c in enumerate(columns)}
-            i_name, i_status = idx["Server"], idx["Status"]
-            i_faction, i_region = idx["Faction"], idx["Region"]
-            i_pop, i_cur, i_max, i_queue = (
-                idx["Population"],
-                idx["Current"],
-                idx["Max"],
-                idx["Queue"],
-            )
-        except KeyError as exc:
-            raise Aion2ApiError(0, self.url, f"unexpected table columns: {columns}") from exc
+        idx = {c: i for i, c in enumerate(columns)}
+
+        # These four identify a server; without them a row is meaningless.
+        required = ("Server", "Status", "Faction", "Region")
+        if any(c not in idx for c in required):
+            raise Aion2ApiError(0, self.url, f"unexpected table columns: {columns}")
+
+        i_name, i_status = idx["Server"], idx["Status"]
+        i_faction, i_region = idx["Faction"], idx["Region"]
+        # The page does not always render the population columns, and a missing
+        # column means "unknown", not a broken table: degrade to None instead.
+        i_pop = idx.get("Population")
+        i_cur = idx.get("Current")
+        i_max = idx.get("Max")
+        i_queue = idx.get("Queue")
+
+        # Only the required columns decide how wide a row has to be.
+        min_width = max(idx[c] for c in required) + 1
 
         out: List[Dict[str, Any]] = []
         for row in parser.rows:
-            if len(row) <= max(idx.values()):
+            if len(row) < min_width:
                 continue
 
             frags = row[i_name]["frags"]
@@ -648,10 +657,10 @@ class Aion2Servers:
                 "status": _cell_text(row[i_status]),
                 "faction": _cell_text(row[i_faction]),
                 "region": _cell_text(row[i_region]),
-                "population_percent": row[i_pop]["width"],
-                "current": _to_int(_cell_text(row[i_cur])),
-                "max": _to_int(_cell_text(row[i_max])),
-                "queue": _to_int(_cell_text(row[i_queue])),
+                "population_percent": None if i_pop is None else row[i_pop]["width"],
+                "current": None if i_cur is None else _to_int(_cell_text(row[i_cur])),
+                "max": None if i_max is None else _to_int(_cell_text(row[i_max])),
+                "queue": None if i_queue is None else _to_int(_cell_text(row[i_queue])),
                 "badges": [f["title"] for f in frags if f["title"]],
                 "note": note,
             }
