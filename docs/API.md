@@ -108,6 +108,35 @@ neighbouring article ids:
 `region` here is the code form (`nae`, `naw`, `eu`, `la`, `as`), not the display name `/servers`
 uses (`NA East`, `Europe`, ...) — it is the same value the character routes take as `?server=`.
 
+`GET /v2/servers` returns the same servers with more detail: how full each one is as a percentage
+plus a plain-word `crowding` label, status flags, and the last 24 hours (shortened here):
+
+```json
+[
+  {
+    "id": 2202,
+    "name": "Zikel",
+    "region": "naw",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 20.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-10-01T00:00:00.000Z",
+    "observed_at": "2026-10-17T21:34:06.716Z",
+    "population_history": [
+      {"time": "2026-10-17T19:00:00Z", "population_percent": 17.3},
+      {"time": "2026-10-17T20:00:00Z", "population_percent": 19.0}
+    ]
+  }
+]
+```
+
+Read it as: Zikel (NA West) is online and 20% full, which the site calls normal; new characters
+cannot be created there.
+
 ## What the fields mean
 
 Notice fields (`/notices`, `/notices/{id}`):
@@ -182,6 +211,30 @@ There is deliberately no `status`, `population_percent`, `current`, `max` or `qu
 publishes none of those, so `/servers/roster` is identity only. Call `/servers` for the numbers.
 Use this endpoint when you want the roster from a source that cannot break the way a scraped page
 can — it reads NCSOFT's own server list and is cached for an hour.
+
+Server fields (`/v2/servers`), same community source as `/servers` but read from its JSON loader:
+
+| Field | Meaning |
+|---|---|
+| `id` | NCSOFT server id, the same as `server_id` in `/servers/roster` |
+| `name` | Server name |
+| `region` | `nae`, `naw`, `eu`, `la` or `as` — also what `?region=` takes |
+| `faction` | `Asmodian` or `Elyos` |
+| `online` / `maintenance` / `creation_blocked` | Status flags |
+| `population_percent` | How full the server is, `0`–`100` — same as in `/servers` |
+| `crowding` | `normal`, `busy` (80% or more) or `full` (100%) — the site's green / amber / red |
+| `is_new` / `first_seen` | Whether the site lists it as new, and since when |
+| `observed_at` | When the site last read this server |
+| `population_history` | Last 24 hours of `population_percent`, hourly: `[{"time": "2026-10-17T20:00:00Z", "population_percent": 17.0}]` |
+
+There are no `current`, `max` or `queue` fields: the loader does not carry them.
+
+`/v2/servers` is rate-limited to the site's own cadence: the site re-checks every server once a
+minute, and the service fetches once per re-check, about 15s after it, however many requests it
+gets. Data is therefore 15–75s old. If the site errors or blocks, the last good data keeps being
+served (check `observed_at` for its age) while the service backs off 1, 2, 4… minutes, up to 10.
+Only with nothing cached yet — or if the site changes its data format — does it return `502`;
+`/servers` keeps working either way. The limit is per process, so replicas each poll.
 
 Character data (`get_character`) is NCSOFT's own JSON, passed through unchanged — two responses
 merged into one dict:

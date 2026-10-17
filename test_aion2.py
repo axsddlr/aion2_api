@@ -7,10 +7,14 @@ the real gaming.tools table, including the awkward bits: a name, a tooltipped
 badge and a note sharing one cell, and a "-" where a number would be.
 """
 
+import base64
 import contextlib
 import io
+import json
 import os
 import re
+import threading
+from datetime import datetime, timezone
 from io import BytesIO
 from urllib.error import HTTPError
 
@@ -256,6 +260,165 @@ def test_server_table_missing_required_column_raises():
         assert "unexpected table columns" in str(exc)
     else:
         raise AssertionError("a missing required column must still raise Aion2ApiError")
+
+
+def loader_response(payload):
+    """A gaming.tools __data.json body, payload encoded as the page serves it."""
+    k = aion2_api.SERVER_STATUS_KEY
+    plain = json.dumps(payload).encode()
+    blob = base64.b64encode(bytes(b ^ k[i % len(k)] for i, b in enumerate(plain))).decode()[::-1]
+    node = {"type": "data", "data": [{"payload": 1, "balance": 2}, blob, None]}
+    return json.dumps({"type": "data", "nodes": [{"type": "skip"}, node]})
+
+
+def servers_v2_from(body):
+    aion2_api.clear_cache()  # the status feed is shared; start each case cold
+    client = aion2_api.Aion2ServersV2()
+    client.raw = lambda: body
+    return client
+
+
+V2_PAYLOAD = {
+    "onlineServers": 2,
+    "regions": [
+        {"code": "EU", "servers": [{"region": "EU", "serverId": 2301, "name": "Israphel", "isRunning": True,
+                                     "creationBlocked": True, "load": 0.5,
+                                     "spark": [{"t": 1, "value": 0.4}]}]},
+        {"code": "NAW", "servers": [{"region": "NAW", "serverId": 1201, "name": "Zikel", "isRunning": True,
+                                      "inMaintenance": False, "load": 0.25}]},
+    ],
+}
+
+
+def test_v2_payload_round_trips_and_filters():
+    client = servers_v2_from(loader_response(V2_PAYLOAD))
+    rows = client.servers()
+    assert [(r["id"], r["region"]) for r in rows] == [(2301, "eu"), (1201, "naw")]
+    assert rows[1]["population_percent"] == 25.0 and rows[1]["crowding"] == "normal"
+    assert rows[0]["creation_blocked"] is True and rows[0]["population_history"] == [
+        {"time": "1970-01-01T00:00:00Z", "population_percent": 40.0}
+    ]
+    assert [r["name"] for r in client.servers(region="NAW")] == ["Zikel"]
+    # v2 rows carry codes, so the drift check takes them as they are.
+    roster = [{"region": "eu", "name": "Israphel"}, {"region": "naw", "name": "Zikel"}]
+    assert aion2_api.server_drift(rows, roster) == []
+
+
+def test_v2_crowding_follows_the_sites_thresholds():
+    c = aion2_api._crowding
+    assert [c(x, 0.8, 1) for x in (0.2, 0.8, 0.99, 1, 1.2)] == ["normal", "busy", "busy", "full", "full"]
+    assert c(None, 0.8, 1) is None and c(0.9, None, None) == "normal"
+
+
+def test_v2_payload_that_no_longer_decodes_raises():
+    for body in (loader_response(V2_PAYLOAD).replace('"payload"', '"other"'),
+                 json.dumps({"nodes": [{"data": [{"payload": 1}, "!!not base64!!"]}]})):
+        try:
+            servers_v2_from(body).servers()
+        except Aion2ApiError:
+            pass
+        else:
+            raise AssertionError("an undecodable loader response must raise Aion2ApiError")
+
+
+@contextlib.contextmanager
+def fake_clock(start=1_000_000.0):
+    """Freeze time.monotonic/time.time at `clock[0]`; advance by assigning to it."""
+    clock = [start]
+    real = aion2_api.time.monotonic, aion2_api.time.time
+    aion2_api.time.monotonic = aion2_api.time.time = lambda: clock[0]
+    try:
+        yield clock
+    finally:
+        aion2_api.time.monotonic, aion2_api.time.time = real
+
+
+def iso(epoch):
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def test_status_feed_fetches_once_per_upstream_refresh():
+    feed = aion2_api._ServerStatusFeed()
+    loads = []
+    with fake_clock() as clock:
+        t0 = clock[0]
+
+        def load():
+            loads.append(clock[0])
+            return {"lastChecked": iso(checked[0])}
+
+        checked = [t0 - 5]  # the site re-checked 5s ago
+        feed.get(load)
+        # Next re-check is due at t0-5+60; fetch 15s after it -> 70s from now.
+        assert feed.next_fetch == t0 + 70
+        clock[0] = t0 + 69
+        feed.get(load)
+        assert len(loads) == 1, "no upstream call before the next refresh is due"
+        # Due, but the site has not re-checked yet: retry in 10s, then 20s.
+        clock[0] = t0 + 70
+        feed.get(load)
+        assert len(loads) == 2 and feed.next_fetch == clock[0] + 10
+        clock[0] += 10
+        feed.get(load)
+        assert feed.next_fetch == clock[0] + 20
+        # It landed: straight back to refresh-aligned.
+        checked[0] = clock[0] - 2
+        clock[0] += 20
+        feed.get(load)
+        assert feed.next_fetch == checked[0] + 75
+
+
+def test_status_feed_serves_stale_and_backs_off_on_errors():
+    feed = aion2_api._ServerStatusFeed()
+    calls = []
+
+    def failing():
+        calls.append(1)
+        raise Aion2ApiError(403, "https://x", "challenge")
+
+    with fake_clock() as clock:
+        good = {"lastChecked": iso(clock[0])}
+        feed.get(lambda: good)
+        clock[0] = feed.next_fetch
+        assert feed.get(failing) is good, "a failure keeps serving the last good data"
+        assert feed.next_fetch == clock[0] + 60
+        clock[0] = feed.next_fetch
+        feed.get(failing)
+        assert feed.next_fetch == clock[0] + 120
+        assert feed.get(failing) is good and len(calls) == 2, "no upstream call while backing off"
+
+    cold = aion2_api._ServerStatusFeed()
+    with fake_clock():
+        for _ in range(2):
+            try:
+                cold.get(failing)
+            except Aion2ApiError:
+                pass
+            else:
+                raise AssertionError("with nothing cached, a failure must raise")
+    assert len(calls) == 3, "a cold failure still backs off instead of refetching at once"
+
+
+def test_status_feed_does_not_queue_callers_behind_a_fetch():
+    feed = aion2_api._ServerStatusFeed()
+    with fake_clock() as clock:
+        old = {"lastChecked": iso(clock[0])}
+        feed.get(lambda: old)
+        clock[0] = feed.next_fetch
+        started, release = threading.Event(), threading.Event()
+
+        def slow():
+            started.set()
+            release.wait(5)
+            return {"lastChecked": iso(clock[0])}
+
+        worker = threading.Thread(target=feed.get, args=(slow,))
+        worker.start()
+        started.wait(5)
+        # While one caller fetches, another gets the current data immediately.
+        assert feed.get(lambda: (_ for _ in ()).throw(AssertionError("second fetch"))) is old
+        release.set()
+        worker.join(5)
 
 
 def test_event_status():

@@ -1,0 +1,282 @@
+[
+  {
+    "id": 2301,
+    "name": "Israphel",
+    "region": "eu",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 49.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T19:00:00.000Z",
+    "observed_at": "2026-10-17T21:39:04.314Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 55.0
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 52.5
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 50.2
+      }
+    ]
+  },
+  {
+    "id": 2302,
+    "name": "Zikel",
+    "region": "eu",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 57.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T19:00:00.000Z",
+    "observed_at": "2026-10-17T21:39:04.314Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 64.8
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 61.5
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 58.4
+      }
+    ]
+  },
+  {
+    "id": 2201,
+    "name": "Israphel",
+    "region": "naw",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 39.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:06.394Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 37.9
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 37.9
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 39.1
+      }
+    ]
+  },
+  {
+    "id": 2202,
+    "name": "Zikel",
+    "region": "naw",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 19.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-10-01T00:00:00.000Z",
+    "observed_at": "2026-10-17T21:39:06.394Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 17.0
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 18.0
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 19.0
+      }
+    ]
+  },
+  {
+    "id": 2101,
+    "name": "Israphel",
+    "region": "nae",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 54.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:08.088Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 51.7
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 52.8
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 53.7
+      }
+    ]
+  },
+  {
+    "id": 2102,
+    "name": "Zikel",
+    "region": "nae",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 55.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:08.088Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 52.3
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 53.6
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 54.9
+      }
+    ]
+  },
+  {
+    "id": 2401,
+    "name": "Israphel",
+    "region": "la",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 37.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:10.610Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 35.6
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 37.1
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 37.3
+      }
+    ]
+  },
+  {
+    "id": 2402,
+    "name": "Zikel",
+    "region": "la",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 37.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:10.610Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 37.0
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 37.0
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 37.0
+      }
+    ]
+  },
+  {
+    "id": 2501,
+    "name": "Israphel",
+    "region": "as",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 23.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:12.193Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 31.8
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 26.3
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 23.7
+      }
+    ]
+  },
+  {
+    "id": 2502,
+    "name": "Zikel",
+    "region": "as",
+    "faction": "Asmodian",
+    "online": true,
+    "maintenance": false,
+    "creation_blocked": true,
+    "population_percent": 23.0,
+    "crowding": "normal",
+    "is_new": false,
+    "first_seen": "2026-09-30T21:45:00.000Z",
+    "observed_at": "2026-10-17T21:39:12.193Z",
+    "population_history": [
+      {
+        "time": "2026-10-17T19:00:00Z",
+        "population_percent": 31.5
+      },
+      {
+        "time": "2026-10-17T20:00:00Z",
+        "population_percent": 26.4
+      },
+      {
+        "time": "2026-10-17T21:00:00Z",
+        "population_percent": 23.8
+      }
+    ]
+  }
+]

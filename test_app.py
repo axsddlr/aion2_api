@@ -9,7 +9,9 @@ the network - these check routing, status codes and response shapes only.
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -182,6 +184,40 @@ def test_servers_roster_is_identity_only():
     # first-party means identity only: NCSOFT publishes no population or status.
     assert "population_percent" not in rows[0]
     assert "status" not in rows[0]
+
+
+def test_v2_servers_shape_and_decode_failure():
+    class FakeServersV2:
+        def servers(self, name=None, region=None):
+            return [{"id": 1201, "name": "Zikel", "region": "naw", "population_percent": 25.0,
+                     "population_history": [{"time": "2026-10-17T20:00:00Z", "population_percent": 20.0}]}]
+
+    with fakes(Aion2ServersV2=FakeServersV2):
+        r = client.get("/v2/servers?region=naw")
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["id"] == 1201 and r.json()[0]["population_history"][0]["population_percent"] == 20.0
+    assert client.get("/v2/servers?region=NA East").status_code == 422
+
+    class BrokenServersV2:
+        def servers(self, name=None, region=None):
+            raise Aion2ApiError(0, "https://x", "payload no longer decodes")
+
+    with fakes(Aion2ServersV2=BrokenServersV2):
+        assert client.get("/v2/servers").status_code == 502
+
+
+def test_v2_servers_round_trips_a_live_snapshot():
+    """fixtures/v2_servers.json is real /v2/servers output: the model must pass it through intact."""
+    rows = json.loads((Path(__file__).parent / "fixtures" / "v2_servers.json").read_text(encoding="utf-8"))
+
+    class SnapshotServersV2:
+        def servers(self, name=None, region=None):
+            return rows
+
+    with fakes(Aion2ServersV2=SnapshotServersV2):
+        r = client.get("/v2/servers")
+    assert r.status_code == 200, r.text
+    assert r.json() == rows
 
 
 def test_servers_roster_upstream_failure_is_502():

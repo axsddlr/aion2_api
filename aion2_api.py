@@ -32,6 +32,7 @@ Requires only the Python standard library (3.9+).
 from __future__ import annotations
 
 import argparse
+import base64
 import html
 import json
 import os
@@ -146,6 +147,7 @@ def clear_cache() -> None:
     _last_request.clear()
     _response_cache.clear()
     _resolved.clear()
+    _status_feed.reset()
 
 
 def _throttle(url: str) -> None:
@@ -177,10 +179,21 @@ def retry_delay(exc: urllib.error.HTTPError, attempt: int) -> float:
     return min(max(delay, 1.0), 60.0)
 
 
-def _fetch(url: str, headers: Dict[str, str], timeout: float) -> str:
-    """GET a URL as text, politely: spaced out, cached, and backed off on 429/503."""
+def _fetch(
+    url: str,
+    headers: Dict[str, str],
+    timeout: float,
+    *,
+    cache: bool = True,
+    retries: int = MAX_RETRIES,
+) -> str:
+    """GET a URL as text, politely: spaced out, cached, and backed off on 429/503.
+
+    `cache=False, retries=0` is for callers that schedule their own fetches
+    (see `_ServerStatusFeed`), so this layer neither delays nor reuses them.
+    """
     now = time.monotonic()
-    cached = _response_cache.get(url)
+    cached = _response_cache.get(url) if cache else None
     if cached and now - cached[0] < CACHE_TTL:
         return cached[1]
 
@@ -191,15 +204,16 @@ def _fetch(url: str, headers: Dict[str, str], timeout: float) -> str:
             req = urllib.request.Request(url, headers=headers, method="GET")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read().decode("utf-8", "replace")
-            if len(_response_cache) >= MAX_CACHE_ENTRIES:
-                _response_cache.clear()  # ponytail: crude bound, LRU if it ever matters
-            _response_cache[url] = (time.monotonic(), raw)
+            if cache:
+                if len(_response_cache) >= MAX_CACHE_ENTRIES:
+                    _response_cache.clear()  # ponytail: crude bound, LRU if it ever matters
+                _response_cache[url] = (time.monotonic(), raw)
             return raw
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")
             # 429/503 mean "come back later", so do exactly that. A 403 is a
             # deliberate block - retrying it just makes things worse.
-            if exc.code in (429, 503) and attempt < MAX_RETRIES:
+            if exc.code in (429, 503) and attempt < retries:
                 time.sleep(retry_delay(exc, attempt))
                 attempt += 1
                 continue
@@ -515,8 +529,9 @@ class Aion2Events:
 
 # --------------------------------------------------------- servers (gaming.tools)
 
-# Third-party community site - NOT an NCSOFT endpoint. It has no JSON API, so the
-# server table is parsed out of the page's HTML. robots.txt allows this path.
+# Third-party community site - NOT an NCSOFT endpoint. v1 parses the server table
+# out of the page's HTML (robots.txt allows this path); v2 reads the page's JSON
+# data, see `Aion2ServersV2`.
 GAMING_TOOLS_BASE = "https://aion2.gaming.tools"
 SERVER_STATUS_PATH = "/server-status"
 
@@ -538,8 +553,7 @@ def _opt_cell(row: List[Dict[str, Any]], i: Optional[int]) -> Optional[Dict[str,
 class _ServerTableParser(HTMLParser):
     """Pull the server table out of the gaming.tools page.
 
-    The page is server-rendered with no JSON behind it, so the only way in is the
-    markup. Text is kept as fragments because a cell can mix a name, a badge and a
+    The page is server-rendered, so the markup carries the whole table. Text is kept as fragments because a cell can mix a name, a badge and a
     note ("Israphel", "EA" tooltipped "Advanced Access", "Character creation blocked").
     """
 
@@ -587,8 +601,8 @@ class _ServerTableParser(HTMLParser):
 class Aion2Servers:
     """Server population, read from the community site aion2.gaming.tools.
 
-    Unlike the other clients this one parses HTML, because the page has no JSON
-    API behind it. Treat it as the most fragile source here: the site is a fan
+    Unlike the other clients this one parses HTML; the page's only JSON is the
+    encoded data `Aion2ServersV2` reads. Treat it as the most fragile source here: the site is a fan
     project (not NCSOFT) and sits behind Cloudflare.
     """
 
@@ -694,6 +708,211 @@ class Aion2Servers:
         return matches[0] if matches else None
 
 
+# The page's JSON data carries its `payload` encoded. The site can change the
+# encoding at any time, so a decode failure is reported as such rather than as
+# an empty table.
+SERVER_STATUS_DATA_PATH = "/server-status/__data.json?x-sveltekit-invalidated=001"
+SERVER_STATUS_KEY = bytes([154, 60, 87, 241, 40, 189, 100, 14])
+
+
+def decode_server_payload(blob: str) -> Any:
+    """The page's encoded `payload` as JSON."""
+    raw = base64.b64decode(blob[::-1])
+    k = SERVER_STATUS_KEY
+    return json.loads(bytes(b ^ k[i % len(k)] for i, b in enumerate(raw)))
+
+
+# The loader is uncacheable upstream (no-store, so every call reaches the site's
+# origin) and the site re-checks all servers about once a minute. So fetch once
+# per re-check, just after it lands: as fresh as the site itself, at the lowest
+# load that stays fresh.
+STATUS_REFRESH = 60.0  # how often the site re-checks every server
+STATUS_GRACE = 15.0  # fetch this long after a re-check, so it has been published
+STATUS_RECHECK = 10.0  # fetched before the next re-check landed: retry this soon
+STATUS_MAX_BACKOFF = 600.0  # longest wait after repeated failures
+
+
+def _epoch(value: Optional[str]) -> Optional[float]:
+    try:
+        return datetime.fromisoformat((value or "").replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+class _ServerStatusFeed:
+    """One shared copy of the decoded loader, refetched once per upstream refresh.
+
+    - Single-flight: one caller fetches. Callers that already have data get it
+      without waiting; callers with none wait for that one fetch.
+    - Aligned: the next fetch is due at `lastChecked + STATUS_REFRESH +
+      STATUS_GRACE`, when new data should exist - not a fixed TTL after whenever
+      we last asked. Too early, or the site's checker stalled: retry after 10s,
+      20s, 40s... capped at STATUS_REFRESH.
+    - Stale on error: a 403/429/5xx or a decode failure keeps serving the last
+      good payload (rows carry `observed_at`, so the age shows) and backs off
+      60s, 120s, ... up to STATUS_MAX_BACKOFF.
+
+    ponytail: per process. N replicas poll N times; share one feed (or put a
+    cache in front) if you run more than a couple.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self) -> None:
+        self.data: Optional[Dict[str, Any]] = None
+        self.error: Optional[Aion2ApiError] = None
+        self.next_fetch = 0.0  # monotonic
+        self.failures = 0
+        self.unchanged = 0
+
+    def get(self, load: Any) -> Dict[str, Any]:
+        if self.data is not None and time.monotonic() < self.next_fetch:
+            return self.data
+        # Another caller is fetching: answer from what we have rather than queue.
+        if not self._lock.acquire(blocking=self.data is None):
+            return self.data  # type: ignore[return-value]
+        try:
+            now = time.monotonic()
+            if now < self.next_fetch:  # the fetch we waited on just finished, or backing off
+                if self.data is not None:
+                    return self.data
+                raise self.error  # type: ignore[misc]
+            try:
+                fresh = load()
+            except (Aion2ApiError, OSError) as exc:
+                if not isinstance(exc, Aion2ApiError):  # e.g. a read timeout
+                    exc = Aion2ApiError(0, "server status", str(exc))
+                self.failures += 1
+                self.error = exc
+                self.next_fetch = now + min(STATUS_MAX_BACKOFF, STATUS_REFRESH * 2 ** (self.failures - 1))
+                if self.data is None:
+                    raise exc
+                return self.data
+            self.next_fetch = now + self._delay(fresh)
+            self.data, self.error, self.failures = fresh, None, 0
+            return fresh
+        finally:
+            self._lock.release()
+
+    def _delay(self, fresh: Dict[str, Any]) -> float:
+        """Seconds until the next fetch is worth making."""
+        checked = _epoch(fresh.get("lastChecked"))
+        if checked is None:
+            return STATUS_REFRESH
+        prev = _epoch(self.data.get("lastChecked")) if self.data else None
+        if prev is not None and checked <= prev:
+            self.unchanged += 1
+            return min(STATUS_RECHECK * 2 ** (self.unchanged - 1), STATUS_REFRESH)
+        self.unchanged = 0
+        due = checked + STATUS_REFRESH + STATUS_GRACE - time.time()
+        # Clamped, so a skewed clock can neither hammer nor go quiet.
+        return min(max(due, STATUS_RECHECK), STATUS_REFRESH + STATUS_GRACE)
+
+
+_status_feed = _ServerStatusFeed()
+
+
+def _percent(ratio: Any) -> Optional[float]:
+    """The site's 0-1 fullness as a 0-100 percentage, like v1's population_percent."""
+    return round(ratio * 100, 1) if isinstance(ratio, (int, float)) else None
+
+
+def _crowding(load: Any, busy_at: Any, full_at: Any) -> Optional[str]:
+    """normal / busy / full, by the site's own rule (its green / amber / red)."""
+    if not isinstance(load, (int, float)):
+        return None
+    if isinstance(full_at, (int, float)) and load >= full_at:
+        return "full"
+    if isinstance(busy_at, (int, float)) and load >= busy_at:
+        return "busy"
+    return "normal"
+
+
+class Aion2ServersV2:
+    """Server status from the gaming.tools JSON loader instead of its HTML.
+
+    Richer than `Aion2Servers`: NCSOFT server ids, maintenance and creation-lock
+    flags, and a 24-hour population history. It has no current/max/queue counts -
+    only `population_percent`, how full each server is (0-100, as in v1). The
+    `region` query parameter is ignored upstream: one call returns every region.
+    """
+
+    def __init__(self, *, timeout: float = 25.0, headers: Optional[Dict[str, str]] = None):
+        self.url = f"{GAMING_TOOLS_BASE}{SERVER_STATUS_DATA_PATH}"
+        self.timeout = timeout
+        self._headers = {
+            "User-Agent": build_user_agent("server status"),
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        if headers:
+            self._headers.update(headers)
+
+    def raw(self) -> str:
+        """The raw response, payload still encoded. Unthrottled: call `status()`."""
+        # The feed schedules and backs off itself; the generic cache and
+        # retry-sleeps would only delay it while it holds its lock.
+        return _fetch(self.url, self._headers, self.timeout, cache=False, retries=0)
+
+    def status(self) -> Dict[str, Any]:
+        """The whole decoded payload: totals, then `regions[].servers[]`.
+
+        Shared and rate-limited by `_ServerStatusFeed`: at most about one upstream
+        request per site refresh, however many callers.
+        """
+        return _status_feed.get(self._load)
+
+    def _load(self) -> Dict[str, Any]:
+        try:
+            doc = json.loads(self.raw())
+            # devalue format: data[0] maps field names to indexes into data.
+            for node in doc["nodes"]:
+                data = node.get("data") or []
+                if data and isinstance(data[0], dict) and "payload" in data[0]:
+                    return decode_server_payload(data[data[0]["payload"]])
+        except (ValueError, KeyError, TypeError, IndexError) as exc:
+            raise Aion2ApiError(0, self.url, f"payload no longer decodes: {exc}") from exc
+        raise Aion2ApiError(0, self.url, "no payload in the loader response")
+
+    def servers(self, name: Optional[str] = None, region: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Every server; `region` is a code (nae, naw, eu, la, as), like the roster."""
+        out: List[Dict[str, Any]] = []
+        status = self.status()
+        for reg in status.get("regions") or []:
+            for s in reg.get("servers") or []:
+                row = {
+                    "id": s.get("serverId"),
+                    "name": s.get("name"),
+                    "region": (s.get("region") or reg.get("code") or "").lower(),
+                    "faction": s.get("faction"),
+                    "online": s.get("isRunning"),
+                    "maintenance": s.get("inMaintenance"),
+                    "creation_blocked": s.get("creationBlocked"),
+                    "population_percent": _percent(s.get("load")),
+                    "crowding": _crowding(s.get("load"), s.get("busyAt"), status.get("fullAt")),
+                    "is_new": s.get("isNew"),
+                    "first_seen": s.get("firstSeen"),
+                    "observed_at": s.get("observedAt"),
+                    # The site's points are {t: epoch ms, value: 0-1}; say what they are.
+                    "population_history": [
+                        {
+                            "time": datetime.fromtimestamp(p["t"] / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "population_percent": _percent(p.get("value")),
+                        }
+                        for p in s.get("spark") or []
+                        if isinstance(p.get("t"), (int, float))
+                    ],
+                }
+                if name and (row["name"] or "").lower() != name.lower():
+                    continue
+                if region and row["region"] != region.lower():
+                    continue
+                out.append(row)
+        return out
+
+
 # What the scraped page calls each region, versus what NCSOFT's roster calls it.
 SCRAPED_REGION_CODES = {
     "Europe": "eu",
@@ -722,7 +941,8 @@ def server_drift(
     shown: Dict[Tuple[str, str], str] = {}
     for row in scraped:
         label = row.get("region")
-        code = SCRAPED_REGION_CODES.get(label or "")
+        # v1 rows carry the page's label, v2 rows already carry the code.
+        code = SCRAPED_REGION_CODES.get(label or "") or (label if label in REGIONS else None)
         if code is None:
             problems.append(f"unknown region label on the page: {label!r} ({row.get('name')!r})")
             continue
@@ -1095,6 +1315,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="compare the whole table with NCSOFT's roster; exit non-zero on any drift",
     )
+    s.add_argument(
+        "--v2",
+        action="store_true",
+        help="read the site's JSON loader (ids, flags, population history) instead of its HTML",
+    )
 
     s = sub.add_parser("character", help="character stats and gear, by name or link")
     s.add_argument("target", help="character name, or a link like https://aionflex.gg/character?id=...&server=1101")
@@ -1171,7 +1396,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if args.name or args.region:
                     print("--check compares the whole table; drop --name/--region", file=sys.stderr)
                     return 2
-                items = Aion2Servers().servers()
+                items = (Aion2ServersV2() if args.v2 else Aion2Servers()).servers()
                 problems = server_drift(items)
                 for problem in problems:
                     print(f"drift: {problem}", file=sys.stderr)
@@ -1179,8 +1404,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                     return 1
                 print(f"consistent with NCSOFT's roster ({len(items)} servers)")
                 return 0
-            items = Aion2Servers().servers(name=args.name, region=args.region)
-            if args.json:
+            client = Aion2ServersV2() if args.v2 else Aion2Servers()
+            items = client.servers(name=args.name, region=args.region)
+            if args.json or args.v2:
                 print(json.dumps(items, ensure_ascii=False, indent=2))
             else:
                 _print_servers(items)

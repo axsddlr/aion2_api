@@ -71,8 +71,9 @@ python aion2_api.py list -n 5
 | `GET /notices` | The newest notices |
 | `GET /notices/{article_id}` | One notice, including its full text |
 | `GET /events` | Current in-game events |
-| `GET /servers` | Player counts for every server |
+| `GET /servers` | How full every server is |
 | `GET /servers/roster` | The server list itself, straight from NCSOFT — no population |
+| `GET /v2/servers` | How full every server is (percent + `normal`/`busy`/`full`), status flags, last 24 hours |
 | `GET /characters/search?name=` | Characters whose name contains `name` |
 | `GET /characters/{name}` | One character's stats, gear, skills, titles and ranking |
 | `GET /characters/{name}/daevanion` | That character's Daevanion boards |
@@ -90,6 +91,7 @@ python aion2_api.py list -n 5
 | `country` | `/events` | `US` | Country tag, e.g. `US`, `DE`, `FR`, `JP` |
 | `name` | `/servers` | – | Server name, e.g. `Israphel` |
 | `region` | `/servers` | – | Region, e.g. `NA East`, `Europe`, `Asia` |
+| `name` / `region` | `/v2/servers` | – | Server name; region as `nae`, `naw`, `eu`, `la` or `as` |
 | `region` | `/characters/search` | all | One of `nae`, `naw`, `eu`, `la`, `as` |
 | `server` | `/characters/{name}...` | – | Server name or id, e.g. `Siel` or `1101` — needed when the name exists on more than one server. An id is faster: it searches one region instead of five |
 
@@ -111,6 +113,7 @@ curl "http://127.0.0.1:8000/servers?name=Zikel"                 # that name in a
 curl "http://127.0.0.1:8000/servers?name=Zikel&region=NA East"  # exactly one server
 curl "http://127.0.0.1:8000/servers?region=Asia"                # one region
 curl "http://127.0.0.1:8000/servers/roster"                      # the server list NCSOFT publishes
+curl "http://127.0.0.1:8000/v2/servers?region=naw"              # v2: percent full, crowding, 24h history
 curl "http://127.0.0.1:8000/characters/search?name=s6x"         # who is called that, where
 curl "http://127.0.0.1:8000/characters/s6x?server=Siel"         # stats, gear, skills
 curl "http://127.0.0.1:8000/characters/s6x/daevanion?server=Siel"          # their boards

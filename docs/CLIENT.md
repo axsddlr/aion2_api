@@ -75,6 +75,18 @@ servers.servers(name="Zikel")                   # this name in every region (5 r
 servers.server("Zikel", region="NA East")       # one server
 ```
 
+`Aion2ServersV2` reads the same site's JSON loader instead: server ids, maintenance and
+creation-lock flags, `population_percent` (0–100, as in v1), a `crowding` label (`normal`, `busy`
+or `full`) and a 24-hour `population_history`, but no current/max/queue counts. Regions are
+codes, as in the roster:
+
+```python
+from aion2_api import Aion2ServersV2
+
+for s in Aion2ServersV2().servers(region="naw"):
+    print(f"{s['name']:12} {s['population_percent']:>5}%  {s['crowding']}")
+```
+
 ### Characters
 
 Look a character up by **name**, or paste a character link from a fan site such as
@@ -134,6 +146,7 @@ python aion2_api.py servers                     # every server's population
 python aion2_api.py servers --name Zikel        # that name in all regions
 python aion2_api.py servers --name Zikel --region "NA East"
 python aion2_api.py servers --json              # as JSON
+python aion2_api.py servers --v2 --region naw   # v2: ids, flags, 24h population (JSON)
 python aion2_api.py character s6x --server Siel # stats + gear (server: name or id)
 python aion2_api.py character "<character link>" # same, from an aionflex.gg-style link
 python aion2_api.py character s6x --server Siel --json  # everything: titles, ranking, skills, pet

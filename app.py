@@ -5,6 +5,7 @@
     GET /events               current events from /eventon
     GET /servers              server population (third-party source)
     GET /servers/roster       the server list itself (first-party, no population)
+    GET /v2/servers           server status with ids, flags and 24h population (third-party)
     GET /characters/search    find characters by name
     GET /characters/{name}    stats, gear, skills (?server= when the name is ambiguous)
     GET /characters/{name}/daevanion[/{board}]   Daevanion boards
@@ -35,6 +36,7 @@ from aion2_api import (
     Aion2Board,
     Aion2Events,
     Aion2Servers,
+    Aion2ServersV2,
     CharacterLookupError,
     character_endpoint,
     find_board,
@@ -53,7 +55,9 @@ app = FastAPI(
         "* **GET /notices** — newest notices, or `?board=notice_de` for another language\n"
         "* **GET /notices/{id}** — one notice, including its full text\n"
         "* **GET /events** — current in-game events\n"
-        "* **GET /servers** — player counts per server\n"
+        "* **GET /servers** — how full each server is\n"
+        "* **GET /v2/servers** — the same as a percentage plus `normal` / `busy` / `full`, "
+        "status flags and the last 24 hours\n"
         "* **GET /characters/{name}** — a character's stats, gear and skills\n"
         "* **GET /characters/{name}/daevanion** — their Daevanion boards\n\n"
         "No API key or login is needed; the data is public."
@@ -127,6 +131,29 @@ class ServerStatus(BaseModel):
     queue: Optional[int] = None
     badges: List[str] = Field(default_factory=list)
     note: Optional[str] = None
+
+
+class PopulationPoint(BaseModel):
+    time: str = Field(description="Start of the hour, ISO 8601 UTC")
+    population_percent: Optional[float] = Field(None, description="How full the server was, 0-100")
+
+
+class ServerStatusV2(BaseModel):
+    id: Optional[int] = Field(None, description="NCSOFT server id, as in /servers/roster")
+    name: str
+    region: str = Field(description="nae, naw, eu, la or as")
+    faction: Optional[str] = None
+    online: Optional[bool] = None
+    maintenance: Optional[bool] = None
+    creation_blocked: Optional[bool] = None
+    population_percent: Optional[float] = Field(None, description="How full the server is, 0-100")
+    crowding: Optional[Literal["normal", "busy", "full"]] = Field(
+        None, description="normal, busy (80%+) or full (100%), as the site colours it"
+    )
+    is_new: Optional[bool] = None
+    first_seen: Optional[str] = None
+    observed_at: Optional[str] = None
+    population_history: List[PopulationPoint] = Field(default_factory=list, description="Last 24 hours of population_percent")
 
 
 class ServerRosterEntry(BaseModel):
@@ -218,6 +245,7 @@ def root() -> Dict[str, Any]:
             "server population": "/servers",
             "one server": "/servers?name=Israphel&region=Europe",
             "the roster itself (first-party)": "/servers/roster",
+            "server status with ids and 24h population": "/v2/servers?region=naw",
             "find a character": "/characters/search?name=s6x",
             "character stats and gear": "/characters/s6x?server=Siel",
             "their Daevanion boards": "/characters/s6x/daevanion?server=Siel",
@@ -281,16 +309,37 @@ def servers(
     name: Optional[str] = Query(None, description="Server name, e.g. Israphel"),
     region: Optional[str] = Query(None, description="Region filter, e.g. 'NA East', Europe, Asia"),
 ) -> List[ServerStatus]:
-    """Player counts per server.
+    """How full each server is.
 
     Sourced from the community site aion2.gaming.tools, which is **not** an NCSOFT
-    service - it has no JSON API, so this scrapes its page and is the most fragile
-    endpoint here.
+    service - this scrapes its page's HTML and is the most fragile endpoint here.
+    `/v2/servers` reads the same site's JSON loader instead.
 
     A name on its own is ambiguous: the same server name exists in every region, so
     combine `name` with `region` when you want exactly one row.
     """
     return [ServerStatus(**s) for s in Aion2Servers().servers(name=name, region=region)]
+
+
+@app.get(
+    "/v2/servers",
+    tags=["servers"],
+    summary="Server status with ids, flags and 24h population (third-party source)",
+    response_model=List[ServerStatusV2],
+)
+def servers_v2(
+    name: Optional[str] = Query(None, description="Server name, e.g. Israphel"),
+    region: Optional[Literal["nae", "naw", "eu", "la", "as"]] = Query(None, description="Region code"),
+) -> List[ServerStatusV2]:
+    """Same community source as `/servers`, read from its JSON loader instead of its HTML.
+
+    Adds NCSOFT server ids, maintenance and creation-lock flags and a 24-hour population
+    history. It has no current/max/queue counts; `population_percent` means the same
+    as in v1. Upstream is fetched about once a minute, just after the
+    site's own refresh, however many requests arrive; on upstream errors the last
+    good data is served while it backs off. 502 only when nothing is cached yet.
+    """
+    return [ServerStatusV2(**s) for s in Aion2ServersV2().servers(name=name, region=region)]
 
 
 @app.get(
