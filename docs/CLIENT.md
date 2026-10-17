@@ -87,6 +87,17 @@ for s in Aion2ServersV2().servers(region="naw"):
     print(f"{s['name']:12} {s['population_percent']:>5}%  {s['crowding']}")
 ```
 
+`balance()` compares the factions over the last day, from the same fetch:
+
+```python
+bal = Aion2ServersV2().balance(region="eu")
+eu = bal["regions"][0]
+print(f"EU: {eu['elyos_share_percent']}% Elyos, {eu['asmodian_share_percent']}% Asmodian")
+for p in bal["pairs"]:
+    e, a = p["elyos"], p["asmodian"]
+    print(f"{e['name']} {e['average_population_percent']}%  vs  {a['name']} {a['average_population_percent']}%")
+```
+
 ### Characters
 
 Look a character up by **name**, or paste a character link from a fan site such as

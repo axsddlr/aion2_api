@@ -27,10 +27,11 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (40 checks, standard library only) covers the server-population table parser
+`test_aion2.py` (41 checks, standard library only) covers the server-population table parser
 (including a page that drops the optional population columns, one that drops a required one, and a
 row cut short of the optional columns), the v2 payload decoder and its failure when the format
-changes, the v2 status feed's rate limiting (one fetch per upstream refresh, early-fetch retries,
+changes, the v2 faction balance (region shares, pair sides taken from the server list, blocked
+hours), the v2 status feed's rate limiting (one fetch per upstream refresh, early-fetch retries,
 stale-on-error with backoff, not queueing callers behind a fetch),
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
 (caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
@@ -38,12 +39,13 @@ and the character code (link parsing, region fallback, the first-party roster an
 mapping, the roster-backed region lookup and its offline fallback, name resolution and its cache,
 Daevanion grid placement).
 
-`test_app.py` (14 checks) drives the FastAPI app through its test client with the upstream calls
+`test_app.py` (15 checks) drives the FastAPI app through its test client with the upstream calls
 faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for
 an ambiguous name, `404` for an unknown name or board, a `/servers` response whose optional
 population columns are `null`, `/servers/roster` and its `502` when the upstream list fails,
-`/v2/servers` and its `502` when the payload no longer decodes, a live `/v2/servers` snapshot
-(`fixtures/v2_servers.json`, two servers per region) passing through the model intact,
+`/v2/servers` and its `502` when the payload no longer decodes, `/v2/balance` and its `502`, a
+live `/v2/servers` snapshot (`fixtures/v2_servers.json`, two servers per region) passing through
+the model intact,
 board lookup by name or id, and how upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
 the `dev` group; the web service itself does not depend on it.
 

@@ -236,6 +236,58 @@ served (check `observed_at` for its age) while the service backs off 1, 2, 4… 
 Only with nothing cached yet — or if the site changes its data format — does it return `502`;
 `/servers` keeps working either way. The limit is per process, so replicas each poll.
 
+`GET /v2/balance` compares the two factions over the last day, from the same fetch (and the same
+rate limit) as `/v2/servers`. `?region=` takes `nae`, `naw`, `eu`, `la` or `as`; shortened here:
+
+```json
+{
+  "period_hours": 24,
+  "regions": [
+    {
+      "region": "eu",
+      "elyos_share_percent": 40.6,
+      "asmodian_share_percent": 59.4,
+      "prime_time": {
+        "start": "2026-10-17T17:00:00Z",
+        "end": "2026-10-17T21:00:00Z",
+        "elyos_share_percent": 41.0,
+        "asmodian_share_percent": 59.0
+      },
+      "history": [
+        {"time": "2026-10-16T23:00:00Z", "elyos_share_percent": 39.4, "asmodian_share_percent": 60.6}
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "region": "eu",
+      "elyos": {"id": 1301, "name": "Siel", "average_population_percent": 42.9,
+                "prime_time_population_percent": 59.8, "creation_blocked_hours": 24.0},
+      "asmodian": {"id": 2301, "name": "Israphel", "average_population_percent": 41.8,
+                   "prime_time_population_percent": 54.5, "creation_blocked_hours": 24.0},
+      "history": [
+        {"time": "2026-10-16T23:00:00Z", "elyos_population_percent": 40.1, "asmodian_population_percent": 38.6}
+      ]
+    }
+  ]
+}
+```
+
+Read it as: over the last day, 59% of EU's players were Asmodian. Siel (Elyos) and its partner
+Israphel (Asmodian) were about equally full, and both blocked new characters all day.
+
+| Field | Meaning |
+|---|---|
+| `period_hours` | How far back the figures go — `24` |
+| `regions[].elyos_share_percent` / `asmodian_share_percent` | Each faction's share of the region's players; the two add up to 100 |
+| `regions[].prime_time` | The region's busiest 4 hours, and the shares during them |
+| `regions[].history` | The shares hour by hour |
+| `pairs[].elyos` / `pairs[].asmodian` | The two servers that are partners: `id`, `name`, how full each was on average and in prime time (`0`–`100`), and `creation_blocked_hours` — how many of the 24 hours new characters could not be made there |
+| `pairs[].history` | How full each was, hour by hour |
+
+A share is `null` when neither faction had anyone on in that hour. If the site stops sending
+balance data, `/v2/balance` returns `502` and `/v2/servers` is unaffected.
+
 Character data (`get_character`) is NCSOFT's own JSON, passed through unchanged — two responses
 merged into one dict:
 

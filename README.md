@@ -74,6 +74,7 @@ python aion2_api.py list -n 5
 | `GET /servers` | How full every server is |
 | `GET /servers/roster` | The server list itself, straight from NCSOFT — no population |
 | `GET /v2/servers` | How full every server is (percent + `normal`/`busy`/`full`), status flags, last 24 hours |
+| `GET /v2/balance` | Elyos vs Asmodian over the last day — per region, and per server pair |
 | `GET /characters/search?name=` | Characters whose name contains `name` |
 | `GET /characters/{name}` | One character's stats, gear, skills, titles and ranking |
 | `GET /characters/{name}/daevanion` | That character's Daevanion boards |
@@ -92,6 +93,7 @@ python aion2_api.py list -n 5
 | `name` | `/servers` | – | Server name, e.g. `Israphel` |
 | `region` | `/servers` | – | Region, e.g. `NA East`, `Europe`, `Asia` |
 | `name` / `region` | `/v2/servers` | – | Server name; region as `nae`, `naw`, `eu`, `la` or `as` |
+| `region` | `/v2/balance` | all | One of `nae`, `naw`, `eu`, `la`, `as` |
 | `region` | `/characters/search` | all | One of `nae`, `naw`, `eu`, `la`, `as` |
 | `server` | `/characters/{name}...` | – | Server name or id, e.g. `Siel` or `1101` — needed when the name exists on more than one server. An id is faster: it searches one region instead of five |
 
@@ -114,6 +116,7 @@ curl "http://127.0.0.1:8000/servers?name=Zikel&region=NA East"  # exactly one se
 curl "http://127.0.0.1:8000/servers?region=Asia"                # one region
 curl "http://127.0.0.1:8000/servers/roster"                      # the server list NCSOFT publishes
 curl "http://127.0.0.1:8000/v2/servers?region=naw"              # v2: percent full, crowding, 24h history
+curl "http://127.0.0.1:8000/v2/balance?region=eu"               # Elyos vs Asmodian, region and pairs
 curl "http://127.0.0.1:8000/characters/search?name=s6x"         # who is called that, where
 curl "http://127.0.0.1:8000/characters/s6x?server=Siel"         # stats, gear, skills
 curl "http://127.0.0.1:8000/characters/s6x/daevanion?server=Siel"          # their boards

@@ -262,12 +262,16 @@ def test_server_table_missing_required_column_raises():
         raise AssertionError("a missing required column must still raise Aion2ApiError")
 
 
-def loader_response(payload):
+def loader_response(payload, balance=None):
     """A gaming.tools __data.json body, payload encoded as the page serves it."""
     k = aion2_api.SERVER_STATUS_KEY
-    plain = json.dumps(payload).encode()
-    blob = base64.b64encode(bytes(b ^ k[i % len(k)] for i, b in enumerate(plain))).decode()[::-1]
-    node = {"type": "data", "data": [{"payload": 1, "balance": 2}, blob, None]}
+
+    def encode(obj):
+        plain = json.dumps(obj).encode()
+        return base64.b64encode(bytes(b ^ k[i % len(k)] for i, b in enumerate(plain))).decode()[::-1]
+
+    node = {"type": "data", "data": [{"payload": 1, "balance": 2}, encode(payload),
+                                     None if balance is None else encode(balance)]}
     return json.dumps({"type": "data", "nodes": [{"type": "skip"}, node]})
 
 
@@ -302,6 +306,47 @@ def test_v2_payload_round_trips_and_filters():
     # v2 rows carry codes, so the drift check takes them as they are.
     roster = [{"region": "eu", "name": "Israphel"}, {"region": "naw", "name": "Zikel"}]
     assert aion2_api.server_drift(rows, roster) == []
+
+
+BALANCE = {
+    "periodHours": 24,
+    "regions": {
+        "EU": {"average": {"elyos": 6, "asmodian": 9}, "prime": {"elyos": 1, "asmodian": 1},
+               "primeStart": 0, "trend": [{"t": 3_600_000, "elyos": 0, "asmodian": 0}]},
+        "NAW": {"average": {"elyos": 1, "asmodian": 1}},
+    },
+    # Asmodian listed first on purpose: sides come from the server list, not the order.
+    "pairs": {"EU:Israphel:Siel": {"average": {"elyos": 0.43, "asmodian": 0.42},
+                                    "trend": [{"t": 0, "elyos": 0.5, "asmodian": 0.25}]}},
+    "blocked": {"EU:2301": 1, "EU:1301": 0.25},
+}
+BALANCE_PAYLOAD = {"regions": [{"code": "EU", "servers": [
+    {"serverId": 2301, "name": "Israphel", "faction": "Asmodian"},
+    {"serverId": 1301, "name": "Siel", "faction": "Elyos"},
+]}]}
+
+
+def test_v2_balance_shares_pairs_and_blocked_hours():
+    bal = servers_v2_from(loader_response(BALANCE_PAYLOAD, BALANCE)).balance()
+    eu = bal["regions"][0]
+    assert (eu["region"], eu["elyos_share_percent"], eu["asmodian_share_percent"]) == ("eu", 40.0, 60.0)
+    assert eu["prime_time"] == {"start": "1970-01-01T00:00:00Z", "end": "1970-01-01T04:00:00Z",
+                                "elyos_share_percent": 50.0, "asmodian_share_percent": 50.0}
+    # No players at all is "unknown", not a 0/0 crash or a fake 50/50.
+    assert eu["history"] == [{"time": "1970-01-01T01:00:00Z", "elyos_share_percent": None,
+                              "asmodian_share_percent": None}]
+    pair = bal["pairs"][0]
+    assert pair["elyos"] == {"id": 1301, "name": "Siel", "average_population_percent": 43.0,
+                             "prime_time_population_percent": None, "creation_blocked_hours": 6.0}
+    assert pair["asmodian"]["name"] == "Israphel" and pair["asmodian"]["creation_blocked_hours"] == 24.0
+    assert pair["history"][0]["elyos_population_percent"] == 50.0
+    assert [r["region"] for r in servers_v2_from(loader_response(BALANCE_PAYLOAD, BALANCE)).balance("naw")["regions"]] == ["naw"]
+    try:
+        servers_v2_from(loader_response(BALANCE_PAYLOAD)).balance()
+    except Aion2ApiError as exc:
+        assert "no balance data" in str(exc)
+    else:
+        raise AssertionError("a response without balance data must raise Aion2ApiError")
 
 
 def test_v2_crowding_follows_the_sites_thresholds():

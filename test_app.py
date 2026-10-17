@@ -220,6 +220,33 @@ def test_v2_servers_round_trips_a_live_snapshot():
     assert r.json() == rows
 
 
+def test_v2_balance_shape_and_failure():
+    class FakeBalance:
+        def balance(self, region=None):
+            return {
+                "period_hours": 24,
+                "regions": [{"region": "eu", "elyos_share_percent": 40.6, "asmodian_share_percent": 59.4,
+                             "prime_time": None, "history": []}],
+                "pairs": [{"region": "eu", "elyos": {"id": 1301, "name": "Siel", "creation_blocked_hours": 0.0},
+                           "asmodian": None, "history": []}],
+            }
+
+    with fakes(Aion2ServersV2=FakeBalance):
+        r = client.get("/v2/balance?region=eu")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["regions"][0]["asmodian_share_percent"] == 59.4
+    assert body["pairs"][0]["elyos"]["name"] == "Siel" and body["pairs"][0]["asmodian"] is None
+    assert client.get("/v2/balance?region=Europe").status_code == 422
+
+    class NoBalance:
+        def balance(self, region=None):
+            raise Aion2ApiError(0, "https://x", "no balance data in the response")
+
+    with fakes(Aion2ServersV2=NoBalance):
+        assert client.get("/v2/balance").status_code == 502
+
+
 def test_servers_roster_upstream_failure_is_502():
     with fakes(server_list=raises(Aion2ApiError(0, "https://x", "server list down"))):
         r = client.get("/servers/roster")

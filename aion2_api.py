@@ -711,7 +711,10 @@ class Aion2Servers:
 # The page's JSON data carries its `payload` encoded. The site can change the
 # encoding at any time, so a decode failure is reported as such rather than as
 # an empty table.
-SERVER_STATUS_DATA_PATH = "/server-status/__data.json?x-sveltekit-invalidated=001"
+# view=balance fills in the faction-balance data too, so one request serves both
+# /v2/servers and /v2/balance.
+SERVER_STATUS_DATA_PATH = "/server-status/__data.json?view=balance&x-sveltekit-invalidated=001"
+PRIME_TIME_HOURS = 4  # the site's prime-time window, from `primeStart`
 SERVER_STATUS_KEY = bytes([154, 60, 87, 241, 40, 189, 100, 14])
 
 
@@ -814,6 +817,23 @@ class _ServerStatusFeed:
 _status_feed = _ServerStatusFeed()
 
 
+def _iso_ms(ms: Any) -> Optional[str]:
+    """Epoch milliseconds as ISO 8601 UTC, to the second."""
+    if not isinstance(ms, (int, float)):
+        return None
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _shares(elyos: Any, asmodian: Any) -> Dict[str, Optional[float]]:
+    """Each faction's share of a region's players, in percent (adds up to 100)."""
+    if not all(isinstance(v, (int, float)) for v in (elyos, asmodian)) or elyos + asmodian <= 0:
+        return {"elyos_share_percent": None, "asmodian_share_percent": None}
+    return {
+        "elyos_share_percent": round(elyos / (elyos + asmodian) * 100, 1),
+        "asmodian_share_percent": round(asmodian / (elyos + asmodian) * 100, 1),
+    }
+
+
 def _percent(ratio: Any) -> Optional[float]:
     """The site's 0-1 fullness as a 0-100 percentage, like v1's population_percent."""
     return round(ratio * 100, 1) if isinstance(ratio, (int, float)) else None
@@ -857,7 +877,7 @@ class Aion2ServersV2:
         return _fetch(self.url, self._headers, self.timeout, cache=False, retries=0)
 
     def status(self) -> Dict[str, Any]:
-        """The whole decoded payload: totals, then `regions[].servers[]`.
+        """The whole decoded payload: totals, `regions[].servers[]` and `balance`.
 
         Shared and rate-limited by `_ServerStatusFeed`: at most about one upstream
         request per site refresh, however many callers.
@@ -871,7 +891,10 @@ class Aion2ServersV2:
             for node in doc["nodes"]:
                 data = node.get("data") or []
                 if data and isinstance(data[0], dict) and "payload" in data[0]:
-                    return decode_server_payload(data[data[0]["payload"]])
+                    status = decode_server_payload(data[data[0]["payload"]])
+                    blob = data[data[0]["balance"]] if "balance" in data[0] else None
+                    status["balance"] = decode_server_payload(blob) if isinstance(blob, str) else None
+                    return status
         except (ValueError, KeyError, TypeError, IndexError) as exc:
             raise Aion2ApiError(0, self.url, f"payload no longer decodes: {exc}") from exc
         raise Aion2ApiError(0, self.url, "no payload in the loader response")
@@ -897,10 +920,7 @@ class Aion2ServersV2:
                     "observed_at": s.get("observedAt"),
                     # The site's points are {t: epoch ms, value: 0-1}; say what they are.
                     "population_history": [
-                        {
-                            "time": datetime.fromtimestamp(p["t"] / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                            "population_percent": _percent(p.get("value")),
-                        }
+                        {"time": _iso_ms(p["t"]), "population_percent": _percent(p.get("value"))}
                         for p in s.get("spark") or []
                         if isinstance(p.get("t"), (int, float))
                     ],
@@ -911,6 +931,76 @@ class Aion2ServersV2:
                     continue
                 out.append(row)
         return out
+
+    def balance(self, region: Optional[str] = None) -> Dict[str, Any]:
+        """Elyos vs Asmodian over the last day: per region, and per server pair.
+
+        Region figures are each faction's share of the region's players. Pair
+        figures are each server's own fullness, like `population_percent`.
+        """
+        status = self.status()
+        bal = status.get("balance")
+        if not isinstance(bal, dict):
+            raise Aion2ApiError(0, self.url, "no balance data in the response")
+        hours = bal.get("periodHours") or 24
+        blocked = bal.get("blocked") or {}
+        want = region.lower() if region else None
+
+        regions = []
+        for code, r in (bal.get("regions") or {}).items():
+            if want and code.lower() != want:
+                continue
+            avg, prime = r.get("average") or {}, r.get("prime") or {}
+            start = r.get("primeStart")
+            regions.append({
+                "region": code.lower(),
+                **_shares(avg.get("elyos"), avg.get("asmodian")),
+                "prime_time": None if start is None else {
+                    "start": _iso_ms(start),
+                    "end": _iso_ms(start + PRIME_TIME_HOURS * 3_600_000),
+                    **_shares(prime.get("elyos"), prime.get("asmodian")),
+                },
+                "history": [
+                    {"time": _iso_ms(p.get("t")), **_shares(p.get("elyos"), p.get("asmodian"))}
+                    for p in r.get("trend") or []
+                ],
+            })
+
+        # Pair keys are "REGION:name:name"; take each side's faction from the
+        # server list rather than trusting the order.
+        servers = {
+            (reg.get("code"), s.get("name")): s
+            for reg in status.get("regions") or []
+            for s in reg.get("servers") or []
+        }
+        pairs = []
+        for key, p in (bal.get("pairs") or {}).items():
+            code, _, names = key.partition(":")
+            if want and code.lower() != want:
+                continue
+            row: Dict[str, Any] = {"region": code.lower(), "elyos": None, "asmodian": None}
+            for name in names.split(":"):
+                s = servers.get((code, name)) or {}
+                side = (s.get("faction") or "").lower()
+                if side not in ("elyos", "asmodian"):
+                    continue
+                row[side] = {
+                    "id": s.get("serverId"),
+                    "name": name,
+                    "average_population_percent": _percent((p.get("average") or {}).get(side)),
+                    "prime_time_population_percent": _percent((p.get("prime") or {}).get(side)),
+                    "creation_blocked_hours": round(float(blocked.get(f"{code}:{s.get('serverId')}") or 0) * hours, 1),
+                }
+            row["history"] = [
+                {
+                    "time": _iso_ms(t.get("t")),
+                    "elyos_population_percent": _percent(t.get("elyos")),
+                    "asmodian_population_percent": _percent(t.get("asmodian")),
+                }
+                for t in p.get("trend") or []
+            ]
+            pairs.append(row)
+        return {"period_hours": hours, "regions": regions, "pairs": pairs}
 
 
 # What the scraped page calls each region, versus what NCSOFT's roster calls it.

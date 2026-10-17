@@ -6,6 +6,7 @@
     GET /servers              server population (third-party source)
     GET /servers/roster       the server list itself (first-party, no population)
     GET /v2/servers           server status with ids, flags and 24h population (third-party)
+    GET /v2/balance           Elyos vs Asmodian per region and server pair (third-party)
     GET /characters/search    find characters by name
     GET /characters/{name}    stats, gear, skills (?server= when the name is ambiguous)
     GET /characters/{name}/daevanion[/{board}]   Daevanion boards
@@ -58,6 +59,7 @@ app = FastAPI(
         "* **GET /servers** — how full each server is\n"
         "* **GET /v2/servers** — the same as a percentage plus `normal` / `busy` / `full`, "
         "status flags and the last 24 hours\n"
+        "* **GET /v2/balance** — Elyos vs Asmodian, per region and per server pair\n"
         "* **GET /characters/{name}** — a character's stats, gear and skills\n"
         "* **GET /characters/{name}/daevanion** — their Daevanion boards\n\n"
         "No API key or login is needed; the data is public."
@@ -156,6 +158,53 @@ class ServerStatusV2(BaseModel):
     population_history: List[PopulationPoint] = Field(default_factory=list, description="Last 24 hours of population_percent")
 
 
+class FactionShares(BaseModel):
+    elyos_share_percent: Optional[float] = Field(None, description="Elyos share of the region's players")
+    asmodian_share_percent: Optional[float] = Field(None, description="Asmodian share; the two add up to 100")
+
+
+class SharePoint(FactionShares):
+    time: Optional[str] = Field(None, description="Start of the hour, ISO 8601 UTC")
+
+
+class PrimeTime(FactionShares):
+    start: Optional[str] = Field(None, description="Start of the region's busiest 4 hours, ISO 8601 UTC")
+    end: Optional[str] = None
+
+
+class RegionBalance(FactionShares):
+    region: str = Field(description="nae, naw, eu, la or as")
+    prime_time: Optional[PrimeTime] = None
+    history: List[SharePoint] = Field(default_factory=list, description="Hourly, over the period")
+
+
+class PairServer(BaseModel):
+    id: Optional[int] = Field(None, description="NCSOFT server id")
+    name: str
+    average_population_percent: Optional[float] = Field(None, description="How full it was on average, 0-100")
+    prime_time_population_percent: Optional[float] = Field(None, description="How full it was in prime time")
+    creation_blocked_hours: Optional[float] = Field(None, description="Hours new characters were blocked")
+
+
+class PairPoint(BaseModel):
+    time: Optional[str] = Field(None, description="Start of the hour, ISO 8601 UTC")
+    elyos_population_percent: Optional[float] = None
+    asmodian_population_percent: Optional[float] = None
+
+
+class ServerPair(BaseModel):
+    region: str
+    elyos: Optional[PairServer] = None
+    asmodian: Optional[PairServer] = None
+    history: List[PairPoint] = Field(default_factory=list, description="Hourly, over the period")
+
+
+class Balance(BaseModel):
+    period_hours: int = Field(description="How far back the figures go")
+    regions: List[RegionBalance] = Field(default_factory=list)
+    pairs: List[ServerPair] = Field(default_factory=list)
+
+
 class ServerRosterEntry(BaseModel):
     """NCSOFT's own view of a server: identity only, no population and no status."""
 
@@ -246,6 +295,7 @@ def root() -> Dict[str, Any]:
             "one server": "/servers?name=Israphel&region=Europe",
             "the roster itself (first-party)": "/servers/roster",
             "server status with ids and 24h population": "/v2/servers?region=naw",
+            "faction balance": "/v2/balance?region=eu",
             "find a character": "/characters/search?name=s6x",
             "character stats and gear": "/characters/s6x?server=Siel",
             "their Daevanion boards": "/characters/s6x/daevanion?server=Siel",
@@ -340,6 +390,25 @@ def servers_v2(
     good data is served while it backs off. 502 only when nothing is cached yet.
     """
     return [ServerStatusV2(**s) for s in Aion2ServersV2().servers(name=name, region=region)]
+
+
+@app.get(
+    "/v2/balance",
+    tags=["servers"],
+    summary="Elyos vs Asmodian over the last day, per region and per server pair",
+    response_model=Balance,
+)
+def balance_v2(
+    region: Optional[Literal["nae", "naw", "eu", "la", "as"]] = Query(None, description="Region code"),
+) -> Balance:
+    """Faction balance from the same community source and fetch as `/v2/servers`.
+
+    `regions` gives each faction's share of a region's players (the two add up to
+    100), on average, in prime time and hour by hour. `pairs` sets each Elyos
+    server beside its Asmodian partner, with how full each was and how many hours
+    new characters were blocked.
+    """
+    return Balance(**Aion2ServersV2().balance(region=region))
 
 
 @app.get(
