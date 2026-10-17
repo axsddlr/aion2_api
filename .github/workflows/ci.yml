@@ -70,6 +70,9 @@ jobs:
       - name: Build the runtime image
         run: docker build -t aion2-api:ci .
 
+      - name: Validate the compose file still parses
+        run: docker compose config -q
+
       - name: Start the container
         run: docker run -d --name aion2-ci -p 8000:8000 aion2-api:ci
 

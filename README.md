@@ -127,6 +127,22 @@ instead of `addgroup`/`adduser`. The `Dockerfile` says so at the top.
 CI builds the image on every push and pull request and checks that it starts, serves `/openapi.json`
 and runs as a non-root user, so the Dockerfile cannot rot unnoticed.
 
+To run it as a managed service instead of a bare `docker run`, use the bundled compose file:
+
+```bash
+docker compose up -d --build     # build the image and start it
+docker compose ps                # health comes from the image's own HEALTHCHECK
+docker compose logs -f api
+docker compose down
+```
+
+`compose.yaml` builds from the same `Dockerfile` and adds what a `docker run` line leaves you to
+remember: `restart: unless-stopped`, a configurable host port (`AION2_PORT=9000 docker compose up -d`),
+and real hardening — **read-only root filesystem**, a writable `/tmp` tmpfs, `no-new-privileges`
+and a small init as PID 1. Those were tested against this image rather than assumed: `touch /`
+fails with `Read-only file system` while `touch /tmp/canary` succeeds, and the service still answers
+`/openapi.json`.
+
 ---
 
 ## The web API
@@ -586,6 +602,7 @@ sources and is not installed.
 | `LICENSE` | MIT. Use the code, ship it, fork it — keep the copyright notice. |
 | `Dockerfile` | Two-stage image: 91 MB on Alpine, non-root, with a healthcheck. |
 | `.dockerignore` | Keeps the build context to a few hundred kB — no `.venv`, `.git` or captures. |
+| `compose.yaml` | Runs the image as a service: read-only rootfs, restart policy, port override. |
 
 ### Checks
 

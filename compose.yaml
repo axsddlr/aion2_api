@@ -1,0 +1,32 @@
+# Run the API as a long-lived service:  docker compose up -d
+#
+# The image is built from the Dockerfile in this directory — there is no
+# published image to pull yet. The HEALTHCHECK lives in the image itself, so
+# `docker compose ps` reports health without repeating it here.
+
+services:
+  api:
+    build: .
+    image: aion2-api:local
+    ports:
+      # Host port is configurable without editing this file:
+      #   AION2_PORT=9000 docker compose up -d
+      - "${AION2_PORT:-8000}:8000"
+    restart: unless-stopped
+
+    # The service writes nothing to disk, so a read-only root filesystem costs
+    # it nothing and removes the whole class of "wrote something after a bad
+    # request" failures. /tmp stays writable because the runtime occasionally
+    # wants a scratch path.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+    # uid 10001 already cannot gain privileges, but this also stops a future
+    # setuid binary in the image from doing it.
+    security_opt:
+      - no-new-privileges:true
+
+    # uvicorn handles SIGTERM itself; a tiny init reaps any stray child and
+    # keeps PID 1 well-behaved on shutdown.
+    init: true
