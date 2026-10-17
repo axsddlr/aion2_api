@@ -101,6 +101,7 @@ The same lookup over the web API: `curl "http://127.0.0.1:8000/characters/s6x?se
 | `GET /notices/{article_id}` | One notice, including its full text |
 | `GET /events` | Current in-game events |
 | `GET /servers` | Player counts for every server |
+| `GET /servers/roster` | The server list itself, straight from NCSOFT — no population |
 | `GET /characters/search?name=` | Characters whose name contains `name` |
 | `GET /characters/{name}` | One character's stats, gear, skills, titles and ranking |
 | `GET /characters/{name}/daevanion` | That character's Daevanion boards |
@@ -434,6 +435,21 @@ The four population columns are **optional**. The page does not always render th
 treat `null` as "not published", never as zero. `name`, `status`, `faction` and `region` are always
 present; if one of those disappears the table has really changed and `/servers` returns a `502`.
 
+Roster fields (`/servers/roster`), first-party:
+
+| Field | Meaning |
+|---|---|
+| `server_id` | NCSOFT server id, e.g. `1101` — unique across Global; its 2nd digit is the region |
+| `name` | Server name, e.g. `Siel` |
+| `short_name` | Three-letter tag, e.g. `SIE` |
+| `faction` | `Elyos` or `Asmodian` — every server houses exactly one |
+| `region` | `nae`, `naw`, `eu`, `la` or `as` |
+
+There is deliberately no `status`, `population_percent`, `current`, `max` or `queue` here: NCSOFT
+publishes none of those, so `/servers/roster` is identity only. Call `/servers` for the numbers.
+Use this endpoint when you want the roster from a source that cannot break the way a scraped page
+can — it reads NCSOFT's own server list and is cached for an hour.
+
 Character data (`get_character`) is NCSOFT's own JSON, passed through unchanged — two responses
 merged into one dict:
 
@@ -520,18 +536,19 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (28 checks, standard library only) covers the server-population table parser
+`test_aion2.py` (29 checks, standard library only) covers the server-population table parser
 (including a page that drops the optional population columns, and one that drops a required one),
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
 (caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
-and the character code (link parsing, region fallback, the roster-backed region lookup and its
-offline fallback, name resolution and its cache, Daevanion grid placement).
+and the character code (link parsing, region fallback, the first-party roster and its faction
+mapping, the roster-backed region lookup and its offline fallback, name resolution and its cache,
+Daevanion grid placement).
 
-`test_app.py` (10 checks) drives the FastAPI app through its test client with the upstream calls
+`test_app.py` (12 checks) drives the FastAPI app through its test client with the upstream calls
 faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for
 an ambiguous name, `404` for an unknown name or board, a `/servers` response whose optional
-population columns are `null`, board lookup by name or id, and how upstream failures map to
-`404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
+population columns are `null`, `/servers/roster` and its `502` when the upstream list fails,
+board lookup by name or id, and how upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
 the `dev` group; the web service itself does not depend on it.
 
 ---

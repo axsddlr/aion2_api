@@ -598,7 +598,8 @@ def fake_roster_get_json(seen, fail=False):
         return {
             "serverList": [
                 {
-                    "raceId": 1,
+                    # Alternate the race so both faction mappings are exercised.
+                    "raceId": n,
                     # real ids look like 1101 (nae) ... 1501 (as): 1<region>0<n>
                     "serverId": int(f"1{digit}0{n}"),
                     "serverName": f"S{n}",
@@ -624,6 +625,30 @@ def test_server_roster_maps_ids_to_regions():
 
         aion2_api.server_roster()  # one more call, no more requests
         assert len(seen) == 5, f"the roster must be cached, got {seen}"
+    finally:
+        aion2_api.get_json, aion2_api._roster = real_json, real_roster
+
+
+def test_server_list_carries_names_factions_and_regions():
+    seen = []
+    real_json, real_roster = aion2_api.get_json, aion2_api._roster
+    aion2_api.get_json, aion2_api._roster = fake_roster_get_json(seen), None
+    try:
+        rows = aion2_api.server_list()
+        assert len(rows) == 10, rows
+        by_id = {r["server_id"]: r for r in rows}
+        assert by_id["1101"] == {
+            "server_id": "1101",
+            "name": "S1",
+            "short_name": "S",
+            "faction": "Elyos",
+            "region": "nae",
+        }, by_id["1101"]
+        assert by_id["1102"]["faction"] == "Asmodian", "raceId 2 is Asmodian"
+        assert by_id["1502"]["region"] == "as"
+        # only the two races NCSOFT has been observed to use; anything else is
+        # left as None rather than guessed.
+        assert aion2_api.SERVER_FACTION_BY_RACE == {1: "Elyos", 2: "Asmodian"}
     finally:
         aion2_api.get_json, aion2_api._roster = real_json, real_roster
 

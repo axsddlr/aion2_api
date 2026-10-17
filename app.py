@@ -4,6 +4,7 @@
     GET /notices/{id}         one notice, with its full text
     GET /events               current events from /eventon
     GET /servers              server population (third-party source)
+    GET /servers/roster       the server list itself (first-party, no population)
     GET /characters/search    find characters by name
     GET /characters/{name}    stats, gear, skills (?server= when the name is ambiguous)
     GET /characters/{name}/daevanion[/{board}]   Daevanion boards
@@ -41,6 +42,7 @@ from aion2_api import (
     get_daevanion_board,
     resolve_character,
     search_characters,
+    server_list,
 )
 
 app = FastAPI(
@@ -127,6 +129,16 @@ class ServerStatus(BaseModel):
     note: Optional[str] = None
 
 
+class ServerRosterEntry(BaseModel):
+    """NCSOFT's own view of a server: identity only, no population and no status."""
+
+    server_id: str = Field(description="NCSOFT server id, e.g. 1101")
+    name: Optional[str] = None
+    short_name: Optional[str] = None
+    faction: Optional[str] = Field(None, description="Elyos or Asmodian")
+    region: str = Field(description="nae, naw, eu, la or as")
+
+
 class CharacterHit(BaseModel):
     character_id: str = Field(description="NCSOFT character id")
     name: str
@@ -205,6 +217,7 @@ def root() -> Dict[str, Any]:
             "current events": "/events",
             "server population": "/servers",
             "one server": "/servers?name=Israphel&region=Europe",
+            "the roster itself (first-party)": "/servers/roster",
             "find a character": "/characters/search?name=s6x",
             "character stats and gear": "/characters/s6x?server=Siel",
             "their Daevanion boards": "/characters/s6x/daevanion?server=Siel",
@@ -278,6 +291,24 @@ def servers(
     combine `name` with `region` when you want exactly one row.
     """
     return [ServerStatus(**s) for s in Aion2Servers().servers(name=name, region=region)]
+
+
+@app.get(
+    "/servers/roster",
+    tags=["servers"],
+    summary="Server roster, straight from NCSOFT (no population)",
+    response_model=List[ServerRosterEntry],
+)
+def servers_roster() -> List[ServerRosterEntry]:
+    """The servers themselves: ids, names, factions and regions.
+
+    First-party, read from NCSOFT's own server list rather than the community site,
+    so it survives a redesign of that page. NCSOFT publishes **no** population, status
+    or queue data, so none of those fields are here - call `/servers` for those.
+
+    Cached for an hour; the first request costs one upstream call per region.
+    """
+    return [ServerRosterEntry(**row) for row in server_list()]
 
 
 @app.get(

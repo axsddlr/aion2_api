@@ -773,15 +773,18 @@ def region_for_server(server: Optional[str]) -> Optional[str]:
 
 
 # NCSOFT's own server list: the authority on which id lives in which region. It is
-# identity only (id, name, short name, faction) - it carries no population, which is
-# why /servers still reads the community site.
+# identity only (id, name, short name, faction) - it carries no population and no
+# status, which is why /servers still reads the community site.
 SERVER_LIST_PATH = "/en-us/api/gameinfo/servers"
 ROSTER_TTL = 3600.0
-_roster: Optional[Tuple[float, Dict[str, str]]] = None
+# raceId -> faction, joined against the community site for all 106 servers with no
+# disagreements. A raceId NCSOFT adds later stays None rather than being guessed.
+SERVER_FACTION_BY_RACE = {1: "Elyos", 2: "Asmodian"}
+_roster: Optional[Tuple[float, List[Dict[str, Any]]]] = None
 
 
-def server_roster(timeout: float = 25.0) -> Dict[str, str]:
-    """Every known server id -> its region, from NCSOFT. Cached for `ROSTER_TTL`.
+def server_list(timeout: float = 25.0) -> List[Dict[str, Any]]:
+    """Every server NCSOFT itself lists, in region order. Cached for `ROSTER_TTL`.
 
     Costs one request per region the first time and then nothing for an hour. Raises
     whatever the HTTP layer raises; `resolve_server_region` is the safe caller.
@@ -789,19 +792,32 @@ def server_roster(timeout: float = 25.0) -> Dict[str, str]:
     global _roster
     cached = _roster
     if cached and time.monotonic() - cached[0] < ROSTER_TTL:
-        return dict(cached[1])
+        return [dict(row) for row in cached[1]]
 
     url = f"{WEB_BASE}{SERVER_LIST_PATH}"
     headers = {"Referer": f"{WEB_BASE}/en-us/characters/index"}
-    roster: Dict[str, str] = {}
+    rows: List[Dict[str, Any]] = []
     for region in REGIONS:
         data = get_json(url, headers, timeout, {"region": region, "lang": "en-US"})
         for entry in data.get("serverList") or []:
-            roster[str(entry["serverId"])] = region
-    if not roster:
+            rows.append(
+                {
+                    "server_id": str(entry["serverId"]),
+                    "name": entry.get("serverName"),
+                    "short_name": entry.get("serverShortName"),
+                    "faction": SERVER_FACTION_BY_RACE.get(entry.get("raceId")),
+                    "region": region,
+                }
+            )
+    if not rows:
         raise Aion2ApiError(0, url, "empty server list")
-    _roster = (time.monotonic(), roster)
-    return dict(roster)
+    _roster = (time.monotonic(), rows)
+    return [dict(row) for row in rows]
+
+
+def server_roster(timeout: float = 25.0) -> Dict[str, str]:
+    """Every known server id -> its region. See `server_list` for the full records."""
+    return {row["server_id"]: row["region"] for row in server_list(timeout)}
 
 
 def resolve_server_region(server: Optional[str]) -> Optional[str]:

@@ -168,6 +168,28 @@ def test_servers_with_missing_population_is_200_not_502():
     assert row["current"] is None and row["max"] is None and row["queue"] is None
 
 
+def test_servers_roster_is_identity_only():
+    ROSTER = [
+        {"server_id": "1101", "name": "Siel", "short_name": "SIE", "faction": "Elyos", "region": "nae"},
+        {"server_id": "1102", "name": "Israphel", "short_name": "ISR", "faction": "Asmodian", "region": "nae"},
+    ]
+    with fakes(server_list=lambda timeout=25.0: ROSTER):
+        r = client.get("/servers/roster")
+    assert r.status_code == 200, r.text
+    rows = r.json()
+    assert [x["server_id"] for x in rows] == ["1101", "1102"]
+    assert rows[0]["faction"] == "Elyos" and rows[1]["faction"] == "Asmodian"
+    # first-party means identity only: NCSOFT publishes no population or status.
+    assert "population_percent" not in rows[0]
+    assert "status" not in rows[0]
+
+
+def test_servers_roster_upstream_failure_is_502():
+    with fakes(server_list=raises(Aion2ApiError(0, "https://x", "server list down"))):
+        r = client.get("/servers/roster")
+    assert r.status_code == 502, r.text
+
+
 def test_pinned_notices_respect_limit():
     class FakeBoard:
         def pinned(self):
