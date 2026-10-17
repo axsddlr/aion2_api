@@ -530,6 +530,11 @@ def _to_int(text: str) -> Optional[int]:
     return int(digits) if digits else None
 
 
+def _opt_cell(row: List[Dict[str, Any]], i: Optional[int]) -> Optional[Dict[str, Any]]:
+    """The cell at `i`, or None when the column is absent or a short row lacks it."""
+    return row[i] if i is not None and i < len(row) else None
+
+
 class _ServerTableParser(HTMLParser):
     """Pull the server table out of the gaming.tools page.
 
@@ -659,15 +664,20 @@ class Aion2Servers:
             if not server_name:
                 continue
             note = " ".join(f["text"] for f in plain[1:]).strip() or None
+            # A row can stop short of the optional columns; keep what it does have.
+            pop = _opt_cell(row, i_pop)
+            cur = _opt_cell(row, i_cur)
+            cap = _opt_cell(row, i_max)
+            queue = _opt_cell(row, i_queue)
             record = {
                 "name": server_name,
                 "status": _cell_text(row[i_status]),
                 "faction": _cell_text(row[i_faction]),
                 "region": _cell_text(row[i_region]),
-                "population_percent": None if i_pop is None else row[i_pop]["width"],
-                "current": None if i_cur is None else _to_int(_cell_text(row[i_cur])),
-                "max": None if i_max is None else _to_int(_cell_text(row[i_max])),
-                "queue": None if i_queue is None else _to_int(_cell_text(row[i_queue])),
+                "population_percent": None if pop is None else pop["width"],
+                "current": None if cur is None else _to_int(_cell_text(cur)),
+                "max": None if cap is None else _to_int(_cell_text(cap)),
+                "queue": None if queue is None else _to_int(_cell_text(queue)),
                 "badges": [f["title"] for f in frags if f["title"]],
                 "note": note,
             }

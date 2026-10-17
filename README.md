@@ -451,8 +451,10 @@ is the real key.
 
 The four population columns are **optional**. The page does not always render them, so any of
 `population_percent`, `current`, `max` and `queue` can be `null` in an otherwise valid response —
-treat `null` as "not published", never as zero. `name`, `status`, `faction` and `region` are always
-present; if one of those disappears the table has really changed and `/servers` returns a `502`.
+treat `null` as "not published", never as zero. A row that stops short of those columns is kept,
+with the missing numbers `null`, rather than dropped. `name`, `status`, `faction` and `region` are
+always present; if one of those disappears the table has really changed and `/servers` returns a
+`502`.
 
 Roster fields (`/servers/roster`), first-party:
 
@@ -555,8 +557,9 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (29 checks, standard library only) covers the server-population table parser
-(including a page that drops the optional population columns, and one that drops a required one),
+`test_aion2.py` (30 checks, standard library only) covers the server-population table parser
+(including a page that drops the optional population columns, one that drops a required one, and a
+row cut short of the optional columns),
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
 (caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
 and the character code (link parsing, region fallback, the first-party roster and its faction

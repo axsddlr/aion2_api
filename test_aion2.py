@@ -101,6 +101,35 @@ FIXTURE_POPULATION_ONLY = """
 </table>
 """
 
+# Headers advertise all eight columns, but a row can stop early. Such a row still
+# identifies a server, so it is kept with the missing numbers as None.
+FIXTURE_RAGGED_ROW = """
+<table>
+<thead><tr>
+  <th><span>Status</span></th><th><span>Server</span></th><th><span>Faction</span></th>
+  <th><span>Region</span></th><th><span>Population</span></th><th><span>Current</span></th>
+  <th><span>Max</span></th><th><span>Queue</span></th>
+</tr></thead>
+<tbody>
+<tr>
+  <td><span>Online</span></td>
+  <td><div><span>Israphel</span></div></td>
+  <td><span>Asmodian</span></td>
+  <td><span>Europe</span></td>
+</tr>
+<tr>
+  <td><span>Online</span></td>
+  <td><div><span>Siel</span></div></td>
+  <td><span>Elyos</span></td>
+  <td><span>NA East</span></td>
+  <td><div><div style="width: 61%"></div></div></td>
+  <td>5,000</td><td>7,500</td><td>8</td>
+</tr>
+</tbody>
+</table>
+"""
+
+
 # Without Region a row can no longer be identified, so that stays a hard error.
 FIXTURE_MISSING_REQUIRED = """
 <table>
@@ -199,6 +228,25 @@ def test_server_table_with_only_some_population_columns():
     # the surviving column still parses
     assert row["population_percent"] == 52.0
     assert row["current"] is None and row["max"] is None and row["queue"] is None
+
+
+def test_server_table_keeps_a_row_cut_short():
+    """A row that stops before the optional columns keeps its identity, nulls the rest."""
+    rows = servers_from(FIXTURE_RAGGED_ROW).servers()
+    assert len(rows) == 2, rows
+
+    short, full = rows
+    assert short["name"] == "Israphel"
+    assert short["faction"] == "Asmodian"
+    assert short["region"] == "Europe"
+    assert short["population_percent"] is None
+    assert short["current"] is None and short["max"] is None and short["queue"] is None
+
+    # the neighbouring row is unaffected
+    assert full["name"] == "Siel"
+    assert full["population_percent"] == 61.0
+    assert full["current"] == 5000 and full["max"] == 7500
+    assert full["queue"] == 8
 
 
 def test_server_table_missing_required_column_raises():
