@@ -332,6 +332,10 @@ print(render_daevanion_board(board["nodeList"]))  # 15x15 text grid
   (`1101` → `nae`), so `server="1101"` searches one region (~2s) where `server="Siel"` has to
   search all five (~6s) — server names repeat in every region. A resolved name is remembered
   for an hour, so repeat lookups skip the search either way.
+- **`region` comes from NCSOFT, not from a guess.** The id-to-region map is read from NCSOFT's
+  own server list (`/api/gameinfo/servers`) and cached for an hour — one request per region the
+  first time (~4s), nothing after that. If that list is unreachable the code falls back to the
+  id's second digit, which is how the mapping was originally derived.
 - **`region` is optional.** Search already knows it. With only an id and server, the lookup
   tries `nae`, `naw`, `eu`, `la` and `as` until one answers (`region=GLOBAL` in a link is not a
   real region and is treated the same way).
@@ -516,12 +520,12 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (25 checks, standard library only) covers the server-population table parser
+`test_aion2.py` (28 checks, standard library only) covers the server-population table parser
 (including a page that drops the optional population columns, and one that drops a required one),
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
 (caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
-and the character code (link parsing, region fallback, server-id regions, name resolution and
-its cache, Daevanion grid placement).
+and the character code (link parsing, region fallback, the roster-backed region lookup and its
+offline fallback, name resolution and its cache, Daevanion grid placement).
 
 `test_app.py` (10 checks) drives the FastAPI app through its test client with the upstream calls
 faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for

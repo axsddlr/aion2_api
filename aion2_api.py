@@ -17,6 +17,13 @@ Events live on a separate promotion backend (host: https://promotion.plaync.com/
   GET /eventon/item?tag={tags}&status={status}&pageSize={n}&page={p}
                                                    the event list (page-numbered)
 
+The server roster is on the web host, and is identity only - no population:
+
+  GET https://aion2.plaync.com/en-us/api/gameinfo/servers?region={nae|naw|eu|la|as}
+                                                   serverList: id, name, short name, faction
+
+Server *population* has no NCSOFT endpoint; /servers scrapes aion2.gaming.tools instead.
+
 No cookies, no auth, no API key are required for reads.
 
 Requires only the Python standard library (3.9+).
@@ -748,16 +755,69 @@ class CharacterLookupError(LookupError):
 
 
 # Server ids are unique across Global and their 2nd digit is the region - checked
-# against https://aion2.plaync.com/en-us/api/gameinfo/servers?region=... for all
-# five (e.g. 1101 Siel and 2107 Ereshkigal are nae, 1505 Yustiel is as). Server
-# *names* repeat in every region, so only an id narrows the search.
+# against the first-party roster below for all five (e.g. 1101 Siel and 2107
+# Ereshkigal are nae, 1505 Yustiel is as). Server *names* repeat in every region,
+# so only an id narrows the search. The digit rule is the offline fallback: when
+# the roster is reachable it is the authority.
+REGIONS = ("nae", "naw", "eu", "la", "as")
 _REGION_BY_SERVER_DIGIT = {"1": "nae", "2": "naw", "3": "eu", "4": "la", "5": "as"}
 
 
 def region_for_server(server: Optional[str]) -> Optional[str]:
-    """'1101' -> 'nae'. None for a server name or an id outside the known pattern."""
+    """'1101' -> 'nae'. None for a server name or an id outside the known pattern.
+
+    An offline guess from the id digits; `resolve_server_region` prefers the roster.
+    """
     s = (server or "").strip()
     return _REGION_BY_SERVER_DIGIT.get(s[1]) if len(s) == 4 and s.isdigit() else None
+
+
+# NCSOFT's own server list: the authority on which id lives in which region. It is
+# identity only (id, name, short name, faction) - it carries no population, which is
+# why /servers still reads the community site.
+SERVER_LIST_PATH = "/en-us/api/gameinfo/servers"
+ROSTER_TTL = 3600.0
+_roster: Optional[Tuple[float, Dict[str, str]]] = None
+
+
+def server_roster(timeout: float = 25.0) -> Dict[str, str]:
+    """Every known server id -> its region, from NCSOFT. Cached for `ROSTER_TTL`.
+
+    Costs one request per region the first time and then nothing for an hour. Raises
+    whatever the HTTP layer raises; `resolve_server_region` is the safe caller.
+    """
+    global _roster
+    cached = _roster
+    if cached and time.monotonic() - cached[0] < ROSTER_TTL:
+        return dict(cached[1])
+
+    url = f"{WEB_BASE}{SERVER_LIST_PATH}"
+    headers = {"Referer": f"{WEB_BASE}/en-us/characters/index"}
+    roster: Dict[str, str] = {}
+    for region in REGIONS:
+        data = get_json(url, headers, timeout, {"region": region, "lang": "en-US"})
+        for entry in data.get("serverList") or []:
+            roster[str(entry["serverId"])] = region
+    if not roster:
+        raise Aion2ApiError(0, url, "empty server list")
+    _roster = (time.monotonic(), roster)
+    return dict(roster)
+
+
+def resolve_server_region(server: Optional[str]) -> Optional[str]:
+    """Region for a server id, preferring NCSOFT's roster over the id-digit rule.
+
+    None means "search every region": either this is not an id at all, or the roster
+    answered and does not know it (a bad or retired id), which is safer than guessing.
+    """
+    s = (server or "").strip()
+    if not (len(s) == 4 and s.isdigit()):
+        return None
+    try:
+        roster = server_roster()
+    except Exception:
+        return region_for_server(s)
+    return roster.get(s)
 
 
 # Name -> ids rarely changes, and each fresh resolve can cost one search per region
@@ -788,7 +848,7 @@ def resolve_character(target: str, server: Optional[str] = None) -> Dict[str, st
 def _search_one(target: str, server: Optional[str]) -> Dict[str, str]:
     hits = [
         c
-        for c in search_characters(target, region_for_server(server))
+        for c in search_characters(target, resolve_server_region(server))
         if c["name"].lower() == target.lower()
     ]
     if server:

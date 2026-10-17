@@ -538,7 +538,10 @@ def test_resolve_character_by_name():
 
     aion2_api.clear_cache()
     real = aion2_api.search_characters
+    real_roster = aion2_api.server_roster
     aion2_api.search_characters = fake_search
+    # The roster is the region authority; keep it offline and out of the way.
+    aion2_api.server_roster = lambda timeout=25.0: {"1101": "nae"}
     try:
         try:
             aion2_api.resolve_character("s6x")
@@ -568,6 +571,7 @@ def test_resolve_character_by_name():
         assert searched == [None], "failures are not cached - the character may appear later"
     finally:
         aion2_api.search_characters = real
+        aion2_api.server_roster = real_roster
         aion2_api.clear_cache()
     assert aion2_api.region_for_server("1101") == "nae"
     assert aion2_api.region_for_server("2304") == "eu"
@@ -577,6 +581,86 @@ def test_resolve_character_by_name():
     assert aion2_api.region_for_server(None) is None
     # A link never hits search.
     assert aion2_api.resolve_character("https://x/character?id=z%253D&server=9")["character_id"] == "z="
+
+
+ROSTER_DIGITS = {"nae": 1, "naw": 2, "eu": 3, "la": 4, "as": 5}
+
+
+def fake_roster_get_json(seen, fail=False):
+    """A stand-in for get_json that serves NCSOFT's server list, one region at a time."""
+
+    def fake(url, headers, timeout, params):
+        seen.append(params["region"])
+        if fail:
+            raise Aion2ApiError(0, url, "roster unavailable")
+        assert url.endswith("/api/gameinfo/servers"), url
+        digit = ROSTER_DIGITS[params["region"]]
+        return {
+            "serverList": [
+                {
+                    "raceId": 1,
+                    # real ids look like 1101 (nae) ... 1501 (as): 1<region>0<n>
+                    "serverId": int(f"1{digit}0{n}"),
+                    "serverName": f"S{n}",
+                    "serverShortName": "S",
+                }
+                for n in (1, 2)
+            ]
+        }
+
+    return fake
+
+
+def test_server_roster_maps_ids_to_regions():
+    seen = []
+    real_json, real_roster = aion2_api.get_json, aion2_api._roster
+    aion2_api.get_json, aion2_api._roster = fake_roster_get_json(seen), None
+    try:
+        roster = aion2_api.server_roster()
+        assert len(roster) == 10, roster
+        assert roster["1101"] == "nae"
+        assert roster["1501"] == "as"
+        assert seen == ["nae", "naw", "eu", "la", "as"], seen
+
+        aion2_api.server_roster()  # one more call, no more requests
+        assert len(seen) == 5, f"the roster must be cached, got {seen}"
+    finally:
+        aion2_api.get_json, aion2_api._roster = real_json, real_roster
+
+
+def test_resolve_server_region_prefers_the_roster():
+    seen = []
+    real_json, real_roster = aion2_api.get_json, aion2_api._roster
+    aion2_api.get_json, aion2_api._roster = fake_roster_get_json(seen), None
+    try:
+        assert aion2_api.resolve_server_region("1101") == "nae"
+        assert aion2_api.resolve_server_region("1501") == "as"
+        # The digit rule happily guesses "naw" for this one; the roster is the
+        # authority, and it has never heard of it.
+        assert aion2_api.region_for_server("1234") == "naw"
+        assert aion2_api.resolve_server_region("1234") is None
+        # Not an id at all -> search everywhere.
+        assert aion2_api.resolve_server_region("Siel") is None
+        assert aion2_api.resolve_server_region("") is None
+        assert aion2_api.resolve_server_region(None) is None
+    finally:
+        aion2_api.get_json, aion2_api._roster = real_json, real_roster
+
+
+def test_resolve_server_region_falls_back_to_the_digits():
+    seen = []
+    real_json, real_roster = aion2_api.get_json, aion2_api._roster
+    aion2_api.get_json, aion2_api._roster = fake_roster_get_json(seen, fail=True), None
+    try:
+        assert aion2_api.resolve_server_region("1101") == "nae"
+        assert aion2_api.resolve_server_region("2304") == "eu"
+        assert aion2_api.resolve_server_region("1505") == "as"
+        assert aion2_api.resolve_server_region("1901") is None  # unknown digit
+        assert aion2_api.resolve_server_region("Siel") is None
+        assert seen == ["nae"] * 4, f"one attempt per id lookup, {seen}"
+        assert aion2_api._roster is None, "a failed fetch must never be cached"
+    finally:
+        aion2_api.get_json, aion2_api._roster = real_json, real_roster
 
 
 def test_version_matches_pyproject():
