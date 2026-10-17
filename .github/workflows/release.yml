@@ -1,0 +1,73 @@
+name: Release
+
+# CD for this repo is "cut a GitHub Release" — nothing is deployed.
+# Pushing a v* tag is the only trigger.
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Required so softprops/action-gh-release can create the release.
+permissions:
+  contents: write
+
+# Never let two tag pushes race into the same release namespace.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Cut GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # Full history + tags: generate_release_notes needs it to find the
+          # previous tag and build the changelog.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.0
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      # Guard against releasing a version nobody bumped: the pushed tag must
+      # match `version = "..."` in pyproject.toml.
+      - name: Verify tag matches project version
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          # First unindented `version = "..."` line (indented ones belong to
+          # nested tables), read without a pipe so `pipefail` stays quiet.
+          pyproject_version="$(awk -F'"' '/^version[[:space:]]*=[[:space:]]*"/ { print $2; exit }' pyproject.toml)"
+
+          echo "Tag version:     '${tag_version}'"
+          echo "pyproject.toml:  '${pyproject_version}'"
+
+          if [ -z "${pyproject_version}" ]; then
+            echo "::error::Could not read 'version = \"...\"' from pyproject.toml. Refusing to release."
+            exit 1
+          fi
+
+          if [ "${tag_version}" != "${pyproject_version}" ]; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not match pyproject.toml version '${pyproject_version}'. Bump 'version = \"${tag_version}\"' in pyproject.toml (and APP_VERSION in aion2_api.py) before tagging."
+            exit 1
+          fi
+
+          echo "OK: tag '${GITHUB_REF_NAME}' matches pyproject.toml version '${pyproject_version}'."
+
+      # A release must never be cut from a red tree: both suites are plain
+      # asserts and exit non-zero on failure.
+      - name: Run test_aion2.py
+        run: uv run python test_aion2.py
+
+      - name: Run test_app.py
+        run: uv run python test_app.py
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true

@@ -1,5 +1,7 @@
 # AION 2 Notices, Events, Servers & Characters API
 
+[![CI](https://github.com/axsddlr/aion2_api/actions/workflows/ci.yml/badge.svg)](https://github.com/axsddlr/aion2_api/actions/workflows/ci.yml)
+
 Read AION 2 announcements, in-game events, live server population and any character's stats,
 gear and Daevanion boards as clean JSON, instead of loading the website in a browser and
 copy-pasting out of a web page.
@@ -546,6 +548,7 @@ sources and is not installed.
 | `test_app.py` | Offline checks for the web API routes. Needs the dev dependency `httpx2`. |
 | `pyproject.toml` | Project metadata, the two dependencies the web service needs, and the `dev` group for tests. |
 | `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
+| `.github/workflows/` | CI on every push and PR; releases from tags. |
 | `LICENSE` | MIT. Use the code, ship it, fork it — keep the copyright notice. |
 
 ### Checks
@@ -572,6 +575,31 @@ an ambiguous name, `404` for an unknown name or board, a `/servers` response who
 population columns are `null`, `/servers/roster` and its `502` when the upstream list fails,
 board lookup by name or id, and how upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
 the `dev` group; the web service itself does not depend on it.
+
+### Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs both suites on every push to `main` and every
+pull request, against Python 3.9, 3.10, 3.11, 3.12 and 3.13. 3.9 is the floor `pyproject.toml`
+promises, so it is tested rather than assumed. A second job compares `uv.lock` with
+`pyproject.toml` and fails the build when the lock is stale — a dependency added or removed
+without re-locking breaks the build before anyone else runs it. Neither suite touches the network,
+so CI needs no network access and no secrets. It runs the same two commands you do:
+
+```bash
+uv run python test_aion2.py
+uv run python test_app.py
+```
+
+A green local run is the green CI will report.
+
+### Releases
+
+Pushing a tag such as `v1.0.0` starts `.github/workflows/release.yml`. It first checks that the tag
+matches the `version` in `pyproject.toml`, so a `v1.0.0` tag on a tree that still says `0.9.0`
+stops there instead of publishing a release that misstates what it contains. Then it runs both
+suites, with the same commands CI uses. Only when the two agree and the checks pass does it publish
+a GitHub Release with notes generated from the commits since the last tag. The order, then: bump
+`version`, commit, tag, push the tag.
 
 ---
 
