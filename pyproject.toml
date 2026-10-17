@@ -3,6 +3,8 @@ name = "aion2-api"
 version = "1.0.0"
 description = "Unofficial JSON API for AION 2 (Global): notices, in-game events and live server population."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.9"
 keywords = [
     "aion2",
