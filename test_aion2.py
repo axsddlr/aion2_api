@@ -701,6 +701,44 @@ def test_server_list_carries_names_factions_and_regions():
         aion2_api.get_json, aion2_api._roster = real_json, real_roster
 
 
+def test_server_drift_is_empty_when_the_page_agrees_with_the_roster():
+    scraped = [
+        {"name": "Siel", "region": "NA East"},
+        {"name": "Israphel", "region": "Europe"},
+    ]
+    roster = [
+        {"server_id": "1101", "name": "Siel", "region": "nae"},
+        {"server_id": "1301", "name": "Israphel", "region": "eu"},
+    ]
+    assert aion2_api.server_drift(scraped, roster) == []
+
+
+def test_server_drift_names_missing_extra_and_duplicate_rows():
+    roster = [
+        {"server_id": "1101", "name": "Siel", "region": "nae"},
+        {"server_id": "1102", "name": "Nezekan", "region": "nae"},
+    ]
+    scraped = [
+        {"name": "Siel", "region": "NA East"},
+        {"name": "Siel", "region": "NA East"},   # duplicated row
+        {"name": "Ghost", "region": "Europe"},   # not a real server
+    ]
+    problems = aion2_api.server_drift(scraped, roster)
+    joined = " | ".join(problems)
+    assert len(problems) == 3, problems
+    assert any("Nezekan" in p and "missing" in p for p in problems), joined
+    assert any("Ghost" in p for p in problems), joined
+    assert any("duplicate" in p for p in problems), joined
+
+
+def test_server_drift_flags_a_region_label_it_does_not_know():
+    problems = aion2_api.server_drift(
+        [{"name": "Siel", "region": "Mars"}],
+        [{"server_id": "1101", "name": "Siel", "region": "nae"}],
+    )
+    assert any("Mars" in p for p in problems), problems
+
+
 def test_resolve_server_region_prefers_the_roster():
     seen = []
     real_json, real_roster = aion2_api.get_json, aion2_api._roster

@@ -27,7 +27,7 @@ uv run python test_app.py     # web API routes
 
 No network and no pytest — just `assert`s.
 
-`test_aion2.py` (31 checks, standard library only) covers the server-population table parser
+`test_aion2.py` (34 checks, standard library only) covers the server-population table parser
 (including a page that drops the optional population columns, one that drops a required one, and a
 row cut short of the optional columns),
 the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
@@ -46,6 +46,17 @@ the `dev` group; the web service itself does not depend on it.
 Both counts above are asserted by `test_documented_check_counts_match_the_suites`, so this page
 cannot quietly drift from the suites: add or remove a test and that check fails until the number
 here matches again.
+
+The scrape itself can be checked against reality, which is the thing a parser cannot tell you:
+
+```bash
+uv run python aion2_api.py servers --check
+```
+
+That compares every row with NCSOFT's own roster and exits non-zero naming any server the page is
+missing, inventing, duplicating, or filing under a region label nobody recognises. It is the check
+to put on a timer: a silent page change keeps the parser perfectly happy while the numbers go wrong,
+which is exactly what made the optional-columns bug hard to notice.
 
 ### Continuous integration
 

@@ -694,6 +694,63 @@ class Aion2Servers:
         return matches[0] if matches else None
 
 
+# What the scraped page calls each region, versus what NCSOFT's roster calls it.
+SCRAPED_REGION_CODES = {
+    "Europe": "eu",
+    "NA East": "nae",
+    "NA West": "naw",
+    "Asia": "as",
+    "SA": "la",
+}
+
+
+def server_drift(
+    scraped: List[Dict[str, Any]], roster: Optional[List[Dict[str, Any]]] = None
+) -> List[str]:
+    """Where the scraped table and NCSOFT's roster disagree. Empty means consistent.
+
+    A silent page change is the failure behind the optional-columns bug: the table
+    keeps parsing fine while the data goes wrong. Comparing it against the roster -
+    which comes from NCSOFT, not the page - turns that into a named disagreement a
+    monitor can fail on. `roster` defaults to a live `server_list()`.
+    """
+    if roster is None:
+        roster = server_list()
+
+    problems: List[str] = []
+    seen: Dict[Tuple[str, str], int] = {}
+    shown: Dict[Tuple[str, str], str] = {}
+    for row in scraped:
+        label = row.get("region")
+        code = SCRAPED_REGION_CODES.get(label or "")
+        if code is None:
+            problems.append(f"unknown region label on the page: {label!r} ({row.get('name')!r})")
+            continue
+        name = (row.get("name") or "").strip()
+        key = (code, name.lower())
+        seen[key] = seen.get(key, 0) + 1
+        shown.setdefault(key, name)
+
+    for key, times in sorted(seen.items()):
+        if times > 1:
+            problems.append(
+                f"duplicate row on the page: {key[0]}/{shown[key]!r} appears {times} times"
+            )
+
+    # Keys carry the lowercased name; the messages use the spelling each side uses.
+    expected: Dict[Tuple[str, str], str] = {
+        (r["region"], (r.get("name") or "").strip().lower()): (r.get("name") or "").strip()
+        for r in roster
+    }
+    for key in sorted(set(expected) - set(seen)):
+        problems.append(
+            f"missing from the page: {key[0]}/{expected[key]!r} is in NCSOFT's roster"
+        )
+    for key in sorted(set(seen) - set(expected)):
+        problems.append(f"not in NCSOFT's roster: {key[0]}/{shown[key]!r}")
+    return problems
+
+
 # --- characters ---------------------------------------------------------------
 # Reverse-engineered from https://aion2.plaync.com/en-us/characters/index (fan
 # sites such as aionflex.gg only proxy this, behind Cloudflare):
@@ -1033,6 +1090,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--name", help="server name, e.g. Israphel (may exist in several regions)")
     s.add_argument("--region", help="region filter, e.g. 'NA East', Europe, Asia")
     s.add_argument("--json", action="store_true")
+    s.add_argument(
+        "--check",
+        action="store_true",
+        help="compare the whole table with NCSOFT's roster; exit non-zero on any drift",
+    )
 
     s = sub.add_parser("character", help="character stats and gear, by name or link")
     s.add_argument("target", help="character name, or a link like https://aionflex.gg/character?id=...&server=1101")
@@ -1105,6 +1167,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
 
         if args.cmd == "servers":
+            if getattr(args, "check", False):
+                if args.name or args.region:
+                    print("--check compares the whole table; drop --name/--region", file=sys.stderr)
+                    return 2
+                items = Aion2Servers().servers()
+                problems = server_drift(items)
+                for problem in problems:
+                    print(f"drift: {problem}", file=sys.stderr)
+                if problems:
+                    return 1
+                print(f"consistent with NCSOFT's roster ({len(items)} servers)")
+                return 0
             items = Aion2Servers().servers(name=args.name, region=args.region)
             if args.json:
                 print(json.dumps(items, ensure_ascii=False, indent=2))
