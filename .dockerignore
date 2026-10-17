@@ -1,0 +1,30 @@
+# Keep the build context to what the image is built from. pyproject.toml and
+# uv.lock are deliberately NOT listed here: the builder stage needs both.
+
+# Version control, CI and agent/editor state
+.git
+.gitignore
+.github
+.claude
+.vscode
+.idea
+
+# Local Python state. The image builds its own venv from uv.lock; these are
+# host artifacts for a different interpreter and would only bloat the context.
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+
+# Local-only capture helpers and recorded traffic (see .gitignore)
+session.pcap
+*.pcap
+**/*.pcap
+analyze_session.py
+capture_xhr.js
+xhr_capture.json
+
+# Tests are not part of the runtime image, and the venv excludes the dev
+# group, so anything they import would not be installed anyway.
+test_*.py

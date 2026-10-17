@@ -93,6 +93,40 @@ Gear:
 
 The same lookup over the web API: `curl "http://127.0.0.1:8000/characters/s6x?server=Siel"`.
 
+### Option C — Docker
+
+Best if you want the web service to stay running somewhere without managing a virtualenv.
+
+```bash
+docker build -t aion2-api .
+docker run -d --name aion2 -p 8000:8000 aion2-api
+curl "http://127.0.0.1:8000/openapi.json"
+```
+
+The image is a two-stage build: one stage resolves `uv.lock` into a virtualenv, the other copies
+that venv plus `app.py` and `aion2_api.py` onto a clean base. The `uv` binary, the package caches
+and every build tool stay behind in the first stage, and the dev group (`httpx2`, `httpx`) is never
+installed — so the image carries the runtime and nothing else. It runs as **uid 10001**, not root,
+and ships a `HEALTHCHECK` that polls `/` with the stdlib, so `docker ps` shows health without any
+extra tooling in the image.
+
+**Measured size**, same application and same lock, built on amd64:
+
+| Base | Final image | Verdict |
+|---|---|---|
+| `python:3.13-alpine` | **91 MB** | used |
+| `python:3.13-slim-bookworm` | 168 MB | works; ~77 MB heavier |
+| `gcr.io/distroless/python3-debian12` | — | rejected: that image ships Python 3.11, so it would silently drop the project off 3.13 |
+
+Both the Alpine and Debian builds were run end to end, including real upstream calls
+(`/notices`, `/events`), not just a static `/` probe — musl's resolver and CA bundle are exercised,
+not assumed. Alpine is chosen for size; if a future dependency ships no musllinux wheel, switch both
+`FROM` lines to `python:3.13-slim-bookworm`, drop the `apk` lines, and use `groupadd`/`useradd`
+instead of `addgroup`/`adduser`. The `Dockerfile` says so at the top.
+
+CI builds the image on every push and pull request and checks that it starts, serves `/openapi.json`
+and runs as a non-root user, so the Dockerfile cannot rot unnoticed.
+
 ---
 
 ## The web API
@@ -550,6 +584,8 @@ sources and is not installed.
 | `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
 | `.github/workflows/` | CI on every push and PR; releases from tags. |
 | `LICENSE` | MIT. Use the code, ship it, fork it — keep the copyright notice. |
+| `Dockerfile` | Two-stage image: 91 MB on Alpine, non-root, with a healthcheck. |
+| `.dockerignore` | Keeps the build context to a few hundred kB — no `.venv`, `.git` or captures. |
 
 ### Checks
 
