@@ -28,122 +28,41 @@ they change things. See [Caveats](#caveats).
 
 ## Quick start
 
-Pick whichever fits you. You do **not** need both.
-
-### Option A — a web API you can call from anything
-
-Best if you want to fetch data from a script, a bot, a website, or another language.
-The web service is a FastAPI app, managed with [uv](https://docs.astral.sh/uv/) — one command
-creates the environment, installs the dependencies and locks the versions:
+Fastest path, no Python needed — build the image and start it:
 
 ```bash
-uv sync                      # creates .venv and installs from pyproject.toml
-uv run uvicorn app:app --reload
-```
-
-It prints `Uvicorn running on http://127.0.0.1:8000`. Leave that terminal open and try:
-
-```bash
+docker build -t aion2-api . && docker run -d --name aion2 -p 8000:8000 aion2-api
 curl "http://127.0.0.1:8000/notices?limit=3"
 ```
 
-> On Windows PowerShell, `curl` is a built-in alias with different options — type
-> **`curl.exe`** instead.
->
-> Don't have uv? Install it with `winget install astral-sh.uv` on Windows,
-> `brew install uv` on macOS, or `curl -LsSf https://astral.sh/uv/install.sh | sh` on Linux.
+Or, if you are a Python user, [uv](https://docs.astral.sh/uv/) creates the environment and
+installs the pinned dependencies in one command:
 
-There is also a clickable, self-documenting page at
-**<http://127.0.0.1:8000/docs>** where you can try every endpoint in the browser.
+```bash
+uv sync
+uv run uvicorn app:app --reload
+```
 
-There is no `requirements.txt` — `pyproject.toml` is the single source of truth for
-dependencies, and `uv.lock` pins them.
+Either way the service is on <http://127.0.0.1:8000>, with a clickable page at
+**<http://127.0.0.1:8000/docs>** where you can try every endpoint in the browser. There is no
+`requirements.txt` — `pyproject.toml` is the source of truth for dependencies and `uv.lock`
+pins them.
 
-### Option B — the Python client, no installation
-
-Best if you are writing Python or just want to read notices in a terminal.
-It uses only the Python standard library, so there is nothing to install:
+Prefer reading notices in a terminal? The client needs nothing installed at all:
 
 ```bash
 python aion2_api.py list -n 5
 ```
 
-```
-2026-10-07  6ac6a4c0fa34c1011d627a96  Scheduled maintenance: Oct 6 / 7
-2026-10-05  6ab3f7806b722c561dc6a621  Graphics Card Giveaway
-2026-10-05  6ac3eb6e9ed1202b9b8fb5b8  Customization Voucher to All Players
-2026-10-05  6ac3bfa5feeef62e67566809  Thank you for 400,000 Active Players
-2026-10-05  6ac3983171f8fb7c2a7a33b8  [Notice] Server Matchmaking Information (Asia)
-```
+## Where to go next
 
-Or look up a character by name:
-
-```bash
-python aion2_api.py character s6x --server Siel
-```
-
-```
-s6x  Lv45 Chanter  Siel (Elyos)  CP 48326
-  Might                            25  Attack increase +2.5%
-  ...
-Gear:
-  MainHand     Spiritforged Staff +11  [Unique]
-  ...
-```
-
-The same lookup over the web API: `curl "http://127.0.0.1:8000/characters/s6x?server=Siel"`.
-
-### Option C — Docker
-
-Best if you want the web service to stay running somewhere without managing a virtualenv.
-
-```bash
-docker build -t aion2-api .
-docker run -d --name aion2 -p 8000:8000 aion2-api
-curl "http://127.0.0.1:8000/openapi.json"
-```
-
-The image is a two-stage build: one stage resolves `uv.lock` into a virtualenv, the other copies
-that venv plus `app.py` and `aion2_api.py` onto a clean base. The `uv` binary, the package caches
-and every build tool stay behind in the first stage, and the dev group (`httpx2`, `httpx`) is never
-installed — so the image carries the runtime and nothing else. It runs as **uid 10001**, not root,
-and ships a `HEALTHCHECK` that polls `/` with the stdlib, so `docker ps` shows health without any
-extra tooling in the image.
-
-**Measured size**, same application and same lock, built on amd64:
-
-| Base | Final image | Verdict |
-|---|---|---|
-| `python:3.13-alpine` | **91 MB** | used |
-| `python:3.13-slim-bookworm` | 168 MB | works; ~77 MB heavier |
-| `gcr.io/distroless/python3-debian12` | — | rejected: that image ships Python 3.11, so it would silently drop the project off 3.13 |
-
-Both the Alpine and Debian builds were run end to end, including real upstream calls
-(`/notices`, `/events`), not just a static `/` probe — musl's resolver and CA bundle are exercised,
-not assumed. Alpine is chosen for size; if a future dependency ships no musllinux wheel, switch both
-`FROM` lines to `python:3.13-slim-bookworm`, drop the `apk` lines, and use `groupadd`/`useradd`
-instead of `addgroup`/`adduser`. The `Dockerfile` says so at the top.
-
-CI builds the image on every push and pull request and checks that it starts, serves `/openapi.json`
-and runs as a non-root user, so the Dockerfile cannot rot unnoticed.
-
-To run it as a managed service instead of a bare `docker run`, use the bundled compose file:
-
-```bash
-docker compose up -d --build     # build the image and start it
-docker compose ps                # health comes from the image's own HEALTHCHECK
-docker compose logs -f api
-docker compose down
-```
-
-`compose.yaml` builds from the same `Dockerfile` and adds what a `docker run` line leaves you to
-remember: `restart: unless-stopped`, a configurable host port (`AION2_PORT=9000 docker compose up -d`),
-and real hardening — **read-only root filesystem**, a writable `/tmp` tmpfs, `no-new-privileges`
-and a small init as PID 1. Those were tested against this image rather than assumed: `touch /`
-fails with `Read-only file system` while `touch /tmp/canary` succeeds, and the service still answers
-`/openapi.json`.
-
----
+| If you want to… | Read |
+|---|---|
+| Call the HTTP API | the endpoint table and examples below |
+| Know what a field means, or see a full response | [docs/API.md](docs/API.md) |
+| Use the Python client or the `aion2_api.py` CLI | [docs/CLIENT.md](docs/CLIENT.md) |
+| Build, size or harden the container | [docs/DOCKER.md](docs/DOCKER.md) |
+| Work on the code, run checks, cut a release | [docs/DEVELOPING.md](docs/DEVELOPING.md) |
 
 ## The web API
 
@@ -176,6 +95,7 @@ fails with `Read-only file system` while `touch /tmp/canary` succeeds, and the s
 
 Available boards: `notice_en`, `notice_de`, `notice_fr`, `notice_es`, `notice_pt`.
 
+
 ### Examples
 
 ```bash
@@ -198,7 +118,7 @@ curl "http://127.0.0.1:8000/characters/s6x/daevanion/Nezekan?server=Siel"  # one
 ```
 
 Character responses are NCSOFT's own JSON passed through — see
-[What the fields mean](#what-the-fields-mean). A name that exists on several servers answers
+[what the fields mean](docs/API.md#what-the-fields-mean). A name that exists on several servers answers
 `409` with the choices, so a client can show them and retry with `?server=`:
 
 ```json
@@ -213,110 +133,25 @@ Character responses are NCSOFT's own JSON passed through — see
 }
 ```
 
-### What the responses look like
 
-`GET /notices` returns a plain JSON array (shown trimmed here):
+### A response
+
+`GET /notices` returns a plain JSON array; every other route returns the same kind of shape.
+Samples for all of them are in [docs/API.md](docs/API.md#responses).
 
 ```json
 [
   {
     "id": "6ac6a4c0fa34c1011d627a96",
     "title": "Scheduled maintenance: Oct 6 / 7",
-    "summary": "Hello Daevas,We will be performing our weekly scheduled game server ma...",
     "url": "https://aion2.plaync.com/en-us/board/notice/view?articleId=6ac6a4c0fa34c1011d627a96",
     "posted_at": "2026-10-07T20:00:00.001Z",
-    "updated_at": "2026-10-06T11:50:08.107Z",
     "writer": "admin",
     "is_admin": true,
-    "view_count": 4366,
-    "like_count": 0,
-    "comment_count": 0,
-    "has_attachments": true,
-    "thumbnails": ["https://fizz-download.playnccdn.com/lg/file/AION/download_thumbnail/1a0fcfba189-..."],
     "tags": ["CommentWriteOff", "Lang:en", "CommentUiOff"]
   }
 ]
 ```
-
-`GET /notices/{id}` returns one object with the same fields plus `body`, `attachments` and the
-neighbouring article ids:
-
-```json
-{
-  "id": "6ac3bfa5feeef62e67566809",
-  "title": "Thank you for 400,000 Active Players",
-  "body": "Daevas!\n\nThank you for helping us reach 400,000 active players! ...",
-  "attachments": {
-    "files": [
-      {
-        "fileName": "announcements_EN.jpg",
-        "mimeType": "image/jpeg",
-        "fileSize": 19830,
-        "fileUrl": "https://fizz-download.playnccdn.com/lg/file/AION/download/1a10ca24a62-..."
-      }
-    ],
-    "thumbnailUrl": ""
-  },
-  "prev_id": "6ac3983171f8fb7c2a7a33b8",
-  "next_id": "6ac3eb6e9ed1202b9b8fb5b8"
-}
-```
-
-`GET /events` returns events with a banner image and a date window:
-
-```json
-[
-  {
-    "id": "63106",
-    "key": "B69064BAEAA44F3E88609080B58F8C90",
-    "title": "[Notice] New Attendance Event Announcement",
-    "url": "https://aion2.plaync.com/en-us/eventon/board/event_notice/view?articleId=50000002",
-    "image": "https://fizz-download.playnccdn.com/download/v2/buckets/marketing-platform/files/1a0f369ab0d-...",
-    "image_small": "https://fizz-download.playnccdn.com/download/v2/buckets/marketing-platform/files/1a0f369ab0d-...",
-    "starts_at": "2026-09-30T13:00:01Z",
-    "ends_at": "2026-12-16T07:30:01Z",
-    "status": "RUNNING",
-    "tags": ["TYPE_DAILY", "COUNTRY_US", "DOMAIN_AION2_GLOBAL", "MKT_PROMOTION"]
-  }
-]
-```
-
-`GET /servers` returns one row per server, with how full it is:
-
-```json
-[
-  {
-    "name": "Zikel",
-    "status": "Online",
-    "faction": "Asmodian",
-    "region": "NA East",
-    "population_percent": 83.0,
-    "current": 6409,
-    "max": 7700,
-    "queue": null,
-    "badges": ["Advanced Access"],
-    "note": "Character creation blocked"
-  }
-]
-```
-
-`GET /servers/roster` returns the server list itself, straight from NCSOFT — identity only, with no
-`status` and no population, because NCSOFT publishes neither:
-
-```json
-[
-  {
-    "server_id": "1101",
-    "name": "Siel",
-    "short_name": "SIE",
-    "faction": "Elyos",
-    "region": "nae"
-  }
-]
-```
-
-`region` here is the code form (`nae`, `naw`, `eu`, `la`, `as`), not the display name `/servers`
-uses (`NA East`, `Europe`, ...) — it is the same value the character routes take as `?server=`.
 
 ### When something goes wrong
 
@@ -330,331 +165,13 @@ uses (`NA East`, `Europe`, ...) — it is the same value the character routes ta
 
 ---
 
-## The Python client
-
-```python
-from aion2_api import Aion2Board
-
-board = Aion2Board("notice_en")          # or "notice_de", "notice_fr", "notice_es", "notice_pt"
-
-for notice in board.iter_notices(limit=20):     # newest first
-    print(notice["posted_at"], notice["title"])
-    print(notice["url"])
-
-one = board.get_notice("6ac6a4c0fa34c1011d627a96")
-print(one["title"], one["view_count"])
-print(one["body"])                              # full text, HTML already stripped
-```
-
-### Events
-
-```python
-from aion2_api import Aion2Events
-
-events = Aion2Events()                          # US / English, running events
-for event in events.iter_events(limit=10):
-    print(event["status"], event["starts_at"], event["title"])
-    print(event["url"], event["image"])
-
-Aion2Events(country="DE")                       # another region
-Aion2Events(status="CLOSED")                    # ended events
-```
-
-### Server population
-
-```python
-from aion2_api import Aion2Servers
-
-servers = Aion2Servers()
-for s in servers.servers():                     # every server
-    print(f"{s['name']:12} {s['region']:8} {s['population_percent']:>4}%")
-
-servers.servers(name="Zikel")                   # this name in every region (5 rows)
-servers.server("Zikel", region="NA East")       # one server
-```
-
-### Characters
-
-Look a character up by **name**, or paste a character link from a fan site such as
-[aionflex.gg](https://aionflex.gg) (anything with `?id=...&server=...` works). Either way the
-data comes straight from NCSOFT — the link is only a way to carry the character id.
-
-```python
-from aion2_api import (
-    resolve_character, get_character, get_daevanion_board, render_daevanion_board,
-)
-
-c = resolve_character("s6x", server="Siel")     # or a link; -> character_id, server_id, region
-data = get_character(c["character_id"], c["server_id"], c["region"])
-
-print(data["profile"]["className"], data["profile"]["combatPower"])
-for stat in data["stat"]["statList"]:            # Might, Dexterity, ... Item Level
-    print(stat["name"], stat["value"], stat["statSecondList"])
-for item in data["equipment"]["equipmentList"]:  # one per equipped slot
-    print(item["slotPosName"], item["name"], item["enchantLevel"], item["grade"])
-
-boards = data["daevanion"]["boardList"]          # this character's boards (ids like 81, 82, ...)
-board = get_daevanion_board(c["character_id"], c["server_id"], boards[0]["id"], c["region"])
-print(render_daevanion_board(board["nodeList"]))  # 15x15 text grid
-```
-
-- **Names are not unique.** The same name can exist on several servers. `resolve_character`
-  raises `LookupError` listing the candidates; pass `server=` (name or id) to pick one.
-- **A server id is faster than a name.** Server ids are unique and encode the region
-  (`1101` → `nae`), so `server="1101"` searches one region (~2s) where `server="Siel"` has to
-  search all five (~6s) — server names repeat in every region. A resolved name is remembered
-  for an hour, so repeat lookups skip the search either way.
-- **`region` comes from NCSOFT, not from a guess.** The id-to-region map is read from NCSOFT's
-  own server list (`/api/gameinfo/servers`) and cached for an hour — one request per region the
-  first time (~4s), nothing after that. If that list is unreachable the code falls back to the
-  id's second digit, which is how the mapping was originally derived.
-- **`region` is optional.** Search already knows it. With only an id and server, the lookup
-  tries `nae`, `naw`, `eu`, `la` and `as` until one answers (`region=GLOBAL` in a link is not a
-  real region and is treated the same way).
-- **Board nodes place themselves.** Every node in `nodeList` carries its own `row` and `col`
-  (1–15); `type` `None` marks an empty cell. Draw them on a 15×15 grid and the board's shape
-  appears.
-
-### Command line
-
-```bash
-python aion2_api.py list -n 20                  # newest 20 notices
-python aion2_api.py list -n 100 --json          # same, as JSON
-python aion2_api.py view <article_id>           # one notice, full text
-python aion2_api.py view <article_id> --html    # raw article HTML
-python aion2_api.py pinned                      # pinned / important notices
-python aion2_api.py board                       # board metadata
-python aion2_api.py --board notice_de list -n 5 # another language
-python aion2_api.py events -n 10                # current events
-python aion2_api.py events --json               # events as JSON
-python aion2_api.py events --country JP         # another region
-python aion2_api.py servers                     # every server's population
-python aion2_api.py servers --name Zikel        # that name in all regions
-python aion2_api.py servers --name Zikel --region "NA East"
-python aion2_api.py servers --json              # as JSON
-python aion2_api.py character s6x --server Siel # stats + gear (server: name or id)
-python aion2_api.py character "<character link>" # same, from an aionflex.gg-style link
-python aion2_api.py character s6x --server Siel --json  # everything: titles, ranking, skills, pet
-python aion2_api.py daevanion s6x --server Siel # list the character's Daevanion boards
-python aion2_api.py daevanion s6x --server Siel --board nezekan  # draw one (name or id)
-```
-
-`daevanion --board` prints the board as a grid: `S` start, `#`/`o` stat node and `*`/`+` skill
-node (unlocked/locked), `.` empty — followed by the bonuses unlocked on it.
-
-Quote links in the shell — they contain `&`.
-
-`python aion2_api.py --help` lists everything.
-
----
-
-## What the fields mean
-
-Notice fields (`/notices`, `/notices/{id}`):
-
-| Field | Meaning |
-|---|---|
-| `id` | Unique article id — pass it to `/notices/{id}` |
-| `title` | Notice headline |
-| `summary` | Opening of the notice, HTML stripped |
-| `url` | The notice on the official website, in the right language |
-| `posted_at` / `updated_at` | ISO 8601 UTC timestamps |
-| `posted_epoch` | Same time as a Unix timestamp in seconds |
-| `writer` | Author name; `admin` for official NCSOFT posts |
-| `is_admin` | `true` when posted by NCSOFT staff |
-| `view_count`, `like_count`, `comment_count` | Counters as shown on the site |
-| `has_attachments` | `true` if the notice carries images or files |
-| `thumbnails` | Image URLs belonging to the notice |
-| `tags` | Internal flags, e.g. `Lang:en`, `CommentWriteOff` |
-| `body` | *(detail only)* The full notice text, HTML stripped |
-| `attachments.files[]` | *(detail only)* `fileName`, `mimeType`, `fileSize`, `fileUrl` |
-| `prev_id` / `next_id` | *(detail only)* Neighbouring articles; may be `null` |
-
-Event fields (`/events`):
-
-| Field | Meaning |
-|---|---|
-| `id` | Event id |
-| `key` | Stable event key |
-| `title` | Event name |
-| `url` | The event's page on the official site |
-| `image` / `image_small` | Banner image (and its smaller variant) |
-| `starts_at` / `ends_at` | Event window, ISO 8601 UTC |
-| `status` | `RUNNING`, `UPCOMING` or `ENDED` — worked out from the date window |
-| `tags` | Region, domain and type tags, e.g. `COUNTRY_US`, `TYPE_DAILY` |
-
-Server fields (`/servers`):
-
-| Field | Meaning |
-|---|---|
-| `name` | Server name, e.g. `Zikel` |
-| `status` | `Online` (or `Offline`) |
-| `faction` | `Asmodian` or `Elyos` — each server houses only one |
-| `region` | `Europe`, `NA East`, `NA West`, `Asia` or `SA` |
-| `population_percent` | How full the server is — `null` if the site omits that column |
-| `current` | Players online now — `null` if the site omits that column |
-| `max` | Server capacity — `null` if the site omits that column |
-| `queue` | Login queue, or `null` when there is none |
-| `badges` | Access flags, e.g. `Advanced Access` |
-| `note` | Site note, e.g. `Character creation blocked` |
-
-`name` alone is **not** unique — every server name exists once per region, so `name` + `region`
-is the real key.
-
-The four population columns are **optional**. The page does not always render them, so any of
-`population_percent`, `current`, `max` and `queue` can be `null` in an otherwise valid response —
-treat `null` as "not published", never as zero. A row that stops short of those columns is kept,
-with the missing numbers `null`, rather than dropped. `name`, `status`, `faction` and `region` are
-always present; if one of those disappears the table has really changed and `/servers` returns a
-`502`.
-
-Roster fields (`/servers/roster`), first-party:
-
-| Field | Meaning |
-|---|---|
-| `server_id` | NCSOFT server id, e.g. `1101` — unique across Global; its 2nd digit is the region |
-| `name` | Server name, e.g. `Siel` |
-| `short_name` | Three-letter tag, e.g. `SIE` |
-| `faction` | `Elyos` or `Asmodian` — every server houses exactly one |
-| `region` | `nae`, `naw`, `eu`, `la` or `as` |
-
-There is deliberately no `status`, `population_percent`, `current`, `max` or `queue` here: NCSOFT
-publishes none of those, so `/servers/roster` is identity only. Call `/servers` for the numbers.
-Use this endpoint when you want the roster from a source that cannot break the way a scraped page
-can — it reads NCSOFT's own server list and is cached for an hour.
-
-Character data (`get_character`) is NCSOFT's own JSON, passed through unchanged — two responses
-merged into one dict:
-
-| Key | From | Contains |
-|---|---|---|
-| `profile` | info | Name, level, class, race, server, combat power, title, profile image |
-| `stat.statList[]` | info | `name`, `value`, `type` and the bonus text in `statSecondList` |
-| `title`, `ranking` | info | Titles and ranking entries |
-| `daevanion.boardList[]` | info | Board `id`, `name`, `openNodeCount` / `totalNodeCount`, `openPercent` |
-| `equipment.equipmentList[]` | equipment | Equipped items: `slotPosName`, `name`, `enchantLevel`, `grade`, `icon` |
-| `equipment.skinList[]` | equipment | Cosmetic skins |
-| `petwing` | equipment | `pet`, `wing`, `wingSkin` |
-| `skill.skillList[]` | equipment | Skills with `skillLevel`, `category`, `equip` |
-
-A Daevanion board (`get_daevanion_board`) has `nodeList[]` (`row`, `col`, `type` —
-`Start`/`Stat`/`SkillLevel`/`None`, `open`, `grade`, `name`, `effectList`) plus
-`openStatEffectList` and `openSkillEffectList`.
-
-Endpoints behind them (no key, no login):
-
-| Call | Endpoint |
-|---|---|
-| Search by name | `GET https://api-search.plaync.com/aion2global/search/v2/character?keyword=&region=&localeInfo=en-US` |
-| Info | `GET https://aion2.plaync.com/api/character/info?region=&lang=en-US&characterId=&serverId=` |
-| Equipment | `GET https://aion2.plaync.com/api/character/equipment` (same parameters) |
-| Daevanion board | `GET https://aion2.plaync.com/api/character/daevanion/detail` (same, plus `boardId=`) |
-
-`region` must be the real one (`nae`, `naw`, `eu`, `la`, `as`) or the answer is a bare `404`.
-Character ids end in `=`; search returns them already encoded (`%3D`) and fan-site links
-double-encode them (`%253D`) — the client undoes both.
-
----
 
 ## Rate limits and politeness
 
-Nothing here is needed to make the code work. It is what keeps you from being rate-limited, and
-it lives in one place (`_fetch()` in `aion2_api.py`) so every client gets it.
-
-| Measure | Default | Why |
-|---|---|---|
-| Proper User-Agent | `aion2-api/1.0.0 (notices board)` | `product/version (comment)`, one per source. Says what is calling. |
-| Matching `Accept` | JSON for the APIs, HTML for the scrape | Each source is told what we want back. |
-| Spacing per host | 1 second | Two requests to one host are never sent closer together than this. |
-| Response cache | 60 seconds | A repeat read is served locally and never reaches them. |
-| `Retry-After` | honoured | When a server says how long to wait, wait that long. |
-| Retry policy | 429/503 only, twice | Those mean "come back later". A `403` is a deliberate block, so it is not retried. |
-
-Repeating the same read 15 times causes **0** extra network requests. If you poll, that is what
-protects you — not hiding what you are.
-
-Two optional environment variables:
-
-| Variable | Effect |
-|---|---|
-| `AION2_CONTACT` | Added to every User-Agent, e.g. `aion2-api/1.0.0 (notices board; +https://you.example)`. **Set this** if you deploy publicly. |
-| `AION2_USER_AGENT` | Replaces the whole User-Agent for every source, if you need full control. |
-
-Tune `MIN_REQUEST_INTERVAL`, `CACHE_TTL` and `MAX_RETRIES` at the top of `aion2_api.py`.
-
-If a source starts refusing you, the fix is to slow down and cache harder, or to ask the operator
-— not to disguise the client. A browser-automation dependency is not needed for any of these
-sources and is not installed.
-
----
-
-## Files
-
-| File | What it is |
-|---|---|
-| `aion2_api.py` | The client library and CLI (notices, events, servers, characters). Standard library only. |
-| `app.py` | The FastAPI web service (`/notices`, `/events`, `/servers`, `/characters`). |
-| `test_aion2.py` | Offline checks for the client and CLI. No network, no dependencies. |
-| `test_app.py` | Offline checks for the web API routes. Needs the dev dependency `httpx2`. |
-| `pyproject.toml` | Project metadata, the two dependencies the web service needs, and the `dev` group for tests. |
-| `uv.lock` | Pinned dependency versions, written by `uv sync`. Commit it. |
-| `.github/workflows/` | CI on every push and PR; releases from tags. |
-| `LICENSE` | MIT. Use the code, ship it, fork it — keep the copyright notice. |
-| `Dockerfile` | Two-stage image: 91 MB on Alpine, non-root, with a healthcheck. |
-| `.dockerignore` | Keeps the build context to a few hundred kB — no `.venv`, `.git` or captures. |
-| `compose.yaml` | Runs the image as a service: read-only rootfs, restart policy, port override. |
-
-### Checks
-
-```bash
-uv run python test_aion2.py   # client + CLI
-uv run python test_app.py     # web API routes
-```
-
-No network and no pytest — just `assert`s.
-
-`test_aion2.py` (30 checks, standard library only) covers the server-population table parser
-(including a page that drops the optional population columns, one that drops a required one, and a
-row cut short of the optional columns),
-the notice paging, the locale mapping, the event status maths, the rate-limit behaviour
-(caching, per-host spacing for simultaneous callers, `Retry-After`, and not retrying a `403`),
-and the character code (link parsing, region fallback, the first-party roster and its faction
-mapping, the roster-backed region lookup and its offline fallback, name resolution and its cache,
-Daevanion grid placement).
-
-`test_app.py` (12 checks) drives the FastAPI app through its test client with the upstream calls
-faked: search and its `region` validation, `?server=` pass-through, `409` with `candidates` for
-an ambiguous name, `404` for an unknown name or board, a `/servers` response whose optional
-population columns are `null`, `/servers/roster` and its `502` when the upstream list fails,
-board lookup by name or id, and how upstream failures map to `404` / `502` / `503`. It needs `httpx2`, which `uv sync` installs from
-the `dev` group; the web service itself does not depend on it.
-
-### Continuous integration
-
-GitHub Actions (`.github/workflows/ci.yml`) runs both suites on every push to `main` and every
-pull request, against Python 3.9, 3.10, 3.11, 3.12 and 3.13. 3.9 is the floor `pyproject.toml`
-promises, so it is tested rather than assumed. A second job compares `uv.lock` with
-`pyproject.toml` and fails the build when the lock is stale — a dependency added or removed
-without re-locking breaks the build before anyone else runs it. Neither suite touches the network,
-so CI needs no network access and no secrets. It runs the same two commands you do:
-
-```bash
-uv run python test_aion2.py
-uv run python test_app.py
-```
-
-A green local run is the green CI will report.
-
-### Releases
-
-Pushing a tag such as `v1.0.0` starts `.github/workflows/release.yml`. It first checks that the tag
-matches the `version` in `pyproject.toml`, so a `v1.0.0` tag on a tree that still says `0.9.0`
-stops there instead of publishing a release that misstates what it contains. Then it runs both
-suites, with the same commands CI uses. Only when the two agree and the checks pass does it publish
-a GitHub Release with notes generated from the commits since the last tag. The order, then: bump
-`version`, commit, tag, push the tag.
-
----
+It is public data, and the client is already polite for you — cached reads, requests spaced per
+host, `Retry-After` honoured. Do not work around that if you run something busy. The exact limits,
+the reasoning behind each, and the two optional environment variables are in
+[docs/API.md](docs/API.md#rate-limits-and-politeness).
 
 ## Caveats
 
@@ -674,6 +191,7 @@ a GitHub Release with notes generated from the commits since the last tag. The o
 - **Read-only.** This only reads data. It cannot post, comment, or log in.
 
 ---
+
 
 ## Licence
 

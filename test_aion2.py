@@ -742,6 +742,30 @@ def test_version_matches_pyproject():
     assert m and m.group(1) == aion2_api.APP_VERSION, (m and m.group(1), aion2_api.APP_VERSION)
 
 
+def test_documented_check_counts_match_the_suites():
+    """docs/DEVELOPING.md quotes how many checks each suite has; keep it honest.
+
+    These numbers were corrected by hand repeatedly, so pin them: adding or
+    removing a test now fails here until the docs are updated to match.
+    """
+    root = os.path.dirname(os.path.abspath(__file__))
+
+    def count_tests(module):
+        with open(os.path.join(root, module), encoding="utf-8") as f:
+            return len(re.findall(r"(?m)^def test_", f.read()))
+
+    with open(os.path.join(root, "docs", "DEVELOPING.md"), encoding="utf-8") as f:
+        documented = f.read()
+
+    for module in ("test_aion2.py", "test_app.py"):
+        claimed = re.search(r"`" + re.escape(module) + r"` \((\d+) checks", documented)
+        assert claimed, f"docs/DEVELOPING.md no longer states a check count for {module}"
+        stated, actual = int(claimed.group(1)), count_tests(module)
+        assert stated == actual, (
+            f"docs/DEVELOPING.md says {stated} checks for {module}, but it has {actual}"
+        )
+
+
 def test_cli_pinned_prints_no_stray_blank_line():
     class FakeBoard:
         def __init__(self, *args, **kwargs):
