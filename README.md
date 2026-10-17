@@ -138,6 +138,7 @@ curl "http://127.0.0.1:8000/servers"                            # every server's
 curl "http://127.0.0.1:8000/servers?name=Zikel"                 # that name in all 5 regions
 curl "http://127.0.0.1:8000/servers?name=Zikel&region=NA East"  # exactly one server
 curl "http://127.0.0.1:8000/servers?region=Asia"                # one region
+curl "http://127.0.0.1:8000/servers/roster"                      # the server list NCSOFT publishes
 curl "http://127.0.0.1:8000/characters/search?name=s6x"         # who is called that, where
 curl "http://127.0.0.1:8000/characters/s6x?server=Siel"         # stats, gear, skills
 curl "http://127.0.0.1:8000/characters/s6x/daevanion?server=Siel"          # their boards
@@ -246,6 +247,24 @@ neighbouring article ids:
   }
 ]
 ```
+
+`GET /servers/roster` returns the server list itself, straight from NCSOFT — identity only, with no
+`status` and no population, because NCSOFT publishes neither:
+
+```json
+[
+  {
+    "server_id": "1101",
+    "name": "Siel",
+    "short_name": "SIE",
+    "faction": "Elyos",
+    "region": "nae"
+  }
+]
+```
+
+`region` here is the code form (`nae`, `naw`, `eu`, `la`, `as`), not the display name `/servers`
+uses (`NA East`, `Europe`, ...) — it is the same value the character routes take as `?server=`.
 
 ### When something goes wrong
 
