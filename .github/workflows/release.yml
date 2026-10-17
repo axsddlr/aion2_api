@@ -7,57 +7,154 @@ on:
     tags:
       - 'v*'
 
-# Required so softprops/action-gh-release can create the release.
+# Least privilege by default. Only the `publish` job below is granted
+# `contents: write`, and only for the moment it takes to create the Release.
+# Everything that runs repo-controlled code (checks, test suites) is read-only.
 permissions:
-  contents: write
+  contents: read
 
-# Never let two tag pushes race into the same release namespace.
+# A single constant group serializes EVERY tag push through this workflow, so
+# two different tags pushed at the same time queue instead of racing into the
+# release namespace. A per-ref group (`release-${{ github.ref }}`) would only
+# serialize re-runs of the SAME tag, which is not enough.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Cut GitHub Release
+  # Fast gate: the tag must be a SemVer-looking version that matches
+  # pyproject.toml, and it must point at a commit already merged to main (i.e.
+  # one CI has validated). Nothing here runs repo code with write credentials.
+  guard:
+    name: Verify tag and commit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
-          # Full history + tags: generate_release_notes needs it to find the
-          # previous tag and build the changelog.
+          # Full history is required by the ancestry check below: it needs the
+          # tagged commit's complete ancestry to prove it reaches origin/main.
+          # (It is NOT for note generation — the release notes are generated
+          # server-side by the GitHub API.)
           fetch-depth: 0
+          # This job never pushes, so do not leave the job token in .git/config
+          # while repo-controlled code runs.
+          persist-credentials: false
+
+      - name: Verify the tagged commit is merged to main
+        run: |
+          set -euo pipefail
+
+          # `fetch-depth: 0` above already fetched every head (including main)
+          # with full history, so origin/main normally exists here. Make sure
+          # it does — either way the ancestry check below is made against a
+          # real, fetched origin/main and never against a guessed SHA.
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+            git fetch --no-tags --prune origin '+refs/heads/main:refs/remotes/origin/main'
+          fi
+
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null; then
+            echo "::error::Could not resolve origin/main, so the tagged commit cannot be shown to be CI-validated. Refusing to release."
+            exit 1
+          fi
+
+          # A commit that is not an ancestor of origin/main was never merged,
+          # so CI never validated it on main. Release only merged commits.
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::Tagged commit $(git rev-parse --short HEAD) is not an ancestor of origin/main. Merge it to main (and let CI pass) before tagging. Refusing to release."
+            exit 1
+          fi
+
+          echo "OK: $(git rev-parse --short HEAD) is an ancestor of origin/main ($(git rev-parse --short refs/remotes/origin/main))."
 
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # Pin the uv binary to the release that produced uv.lock; a newer uv
+          # must not be able to reject the lock as stale on an untouched tree.
+          version: "0.12.19"
+          # tomllib is stdlib only from Python 3.11; pin 3.13 so the version
+          # check below is deterministic.
+          python-version: "3.13"
+
+      - name: Verify the tag is v + a SemVer version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag_version="${TAG_NAME#v}"
+          if ! printf '%s' "${tag_version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "::error::Tag '${TAG_NAME}' is not 'v' followed by a SemVer version (e.g. v1.0.0 or v1.1.0-rc1). Refusing to release."
+            exit 1
+          fi
+
+      # Guard against releasing a version nobody bumped: the pushed tag must
+      # match ['project']['version'] in pyproject.toml.
+      - name: Verify tag matches pyproject.toml [project].version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag_version="${TAG_NAME#v}"
+
+          # Parse the TOML properly instead of matching a `version = "..."` line:
+          # a bare `version = "9.9.9"` inside another table (e.g. [tool.x]) that
+          # sits above [project] would fool any line-oriented grep/awk.
+          pyproject_version="$(uv run --no-project --python 3.13 python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')" || {
+            echo "::error::Could not read ['project']['version'] from pyproject.toml with tomllib. Refusing to release."
+            exit 1
+          }
+
+          if [ -z "${pyproject_version}" ]; then
+            echo "::error::pyproject.toml has an empty ['project']['version']. Refusing to release."
+            exit 1
+          fi
+
+          echo "Tag version:       '${tag_version}'"
+          echo "[project].version: '${pyproject_version}'"
+
+          if [ "${tag_version}" != "${pyproject_version}" ]; then
+            echo "::error::Tag '${TAG_NAME}' does not match pyproject.toml version '${pyproject_version}'. Bump 'version = \"${tag_version}\"' in pyproject.toml (and APP_VERSION in aion2_api.py) before tagging."
+            exit 1
+          fi
+
+          echo "OK: tag '${TAG_NAME}' matches pyproject.toml [project].version '${pyproject_version}'."
+
+  # Both supported dependency resolutions must be green: 3.9 resolves
+  # starlette 0.49 (which imports httpx), 3.10+ resolves starlette 1.7
+  # (which prefers httpx2). Testing one interpreter would miss half of that.
+  # `publish` needs this job, so a red leg here means nothing is published.
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.9"
+          - "3.13"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          # This job never pushes; don't persist the job token while the test
+          # suites run.
+          persist-credentials: false
+
+      - name: Set up uv with Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          # Same reason as in the guard job: uv.lock was produced by uv 0.12.19,
+          # so the uv binary is pinned rather than whatever is newest today.
+          version: "0.12.19"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install locked dependencies
         run: uv sync --locked
-
-      # Guard against releasing a version nobody bumped: the pushed tag must
-      # match `version = "..."` in pyproject.toml.
-      - name: Verify tag matches project version
-        run: |
-          set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#v}"
-          # First unindented `version = "..."` line (indented ones belong to
-          # nested tables), read without a pipe so `pipefail` stays quiet.
-          pyproject_version="$(awk -F'"' '/^version[[:space:]]*=[[:space:]]*"/ { print $2; exit }' pyproject.toml)"
-
-          echo "Tag version:     '${tag_version}'"
-          echo "pyproject.toml:  '${pyproject_version}'"
-
-          if [ -z "${pyproject_version}" ]; then
-            echo "::error::Could not read 'version = \"...\"' from pyproject.toml. Refusing to release."
-            exit 1
-          fi
-
-          if [ "${tag_version}" != "${pyproject_version}" ]; then
-            echo "::error::Tag '${GITHUB_REF_NAME}' does not match pyproject.toml version '${pyproject_version}'. Bump 'version = \"${tag_version}\"' in pyproject.toml (and APP_VERSION in aion2_api.py) before tagging."
-            exit 1
-          fi
-
-          echo "OK: tag '${GITHUB_REF_NAME}' matches pyproject.toml version '${pyproject_version}'."
 
       # A release must never be cut from a red tree: both suites are plain
       # asserts and exit non-zero on failure.
@@ -67,7 +164,30 @@ jobs:
       - name: Run test_app.py
         run: uv run python test_app.py
 
+  publish:
+    name: Cut GitHub Release
+    # Publish only after EVERY leg above is green.
+    needs:
+      - guard
+      - tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # No checkout here on purpose: the action talks to the GitHub API with
+      # the job token, so there is no working tree and no git credentials to
+      # persist.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          # A re-run of this workflow REGENERATES the release body from the
+          # commit history and overwrites whatever is currently on the
+          # release — hand-edited notes are lost. Stated explicitly instead
+          # of relying on the action's default so nobody is surprised.
+          append_body: false
+          # A tag with a hyphen (v1.1.0-rc1, v1.2.0-beta.1) is a pre-release.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          # ...and a pre-release must never take the "Latest" badge. The API
+          # wants the literal strings "true"/"false" here, not a boolean.
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
